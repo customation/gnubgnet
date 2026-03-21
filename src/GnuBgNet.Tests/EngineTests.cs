@@ -228,6 +228,37 @@ public class EngineTests
         Assert.InRange(result.LoseGammonProbability, 0.0, 1.0);
         Assert.InRange(result.LoseBackgammonProbability, 0.0, 1.0);
         Assert.InRange(result.CubelessEquity, -2.0, 2.0);
+        Assert.InRange(result.CubefulEquity, -2.0, 2.0);
+        Assert.False(double.IsNaN(result.CubefulEquity));
+    }
+
+    [Fact]
+    public void EvaluatePositionFullPlied_ReturnsAllOutputs()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Opening position at 0-ply via FullPlied should match Full
+        var full0 = engine.EvaluatePositionFull("4HPwATDgc/ABMA");
+        var plied0 = engine.EvaluatePositionFullPlied("4HPwATDgc/ABMA", 0);
+
+        Assert.Equal(full0.WinProbability, plied0.WinProbability, 0.001);
+        Assert.Equal(full0.CubelessEquity, plied0.CubelessEquity, 0.001);
+        Assert.InRange(plied0.CubefulEquity, -2.0, 2.0);
+    }
+
+    [Fact]
+    public void EvaluatePositionFull_CubefulDiffersFromCubeless()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Use a non-trivial position where cube has value
+        var result = engine.EvaluatePositionFull("4HPwATDgc/ABMA");
+
+        // For an opening position with centered cube, cubeful and cubeless
+        // should generally differ (live cube has value)
+        Assert.NotEqual(result.CubelessEquity, result.CubefulEquity, 4);
     }
 
     [Fact]

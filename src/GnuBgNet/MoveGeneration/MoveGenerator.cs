@@ -68,6 +68,26 @@ public static class MoveGenerator
     }
 
     /// <summary>
+    /// Apply a move and swap sides, returning the board ready for the next player.
+    /// Port of gnubgapi_apply_move from gnubgapi.c: applies the move then calls SwapSides,
+    /// so the result has the next-to-move player in Player (anBoard[1]).
+    /// </summary>
+    public static Board ApplyMoveAndSwap(Board board, Move move)
+    {
+        return ApplyMove(board, move).Swapped();
+    }
+
+    /// <summary>
+    /// Apply a raw move (from/to pairs in int[8]) and swap sides.
+    /// Returns the board ready for the next player's evaluation.
+    /// Port of gnubgapi_apply_move semantics from gnubgapi.c.
+    /// </summary>
+    public static Board ApplyMoveRawAndSwap(Board board, int[] anMove)
+    {
+        return ApplyMoveRaw(board, anMove).Swapped();
+    }
+
+    /// <summary>
     /// Apply a raw move (from/to pairs in int[8]) to a board.
     /// Returns a new board with the move applied (sides NOT swapped).
     /// Port of ApplyMove() from eval.c for use with MAT parsed moves.

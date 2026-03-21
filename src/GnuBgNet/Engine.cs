@@ -184,24 +184,114 @@ public sealed class Engine : IDisposable
 
     /// <summary>
     /// Evaluate a position returning full 7-output result (5 probs + cubeless + cubeful equity).
+    /// Port of gnubgapi_evaluate_position_full from gnubgapi.c.
     /// </summary>
     public FullEvaluationResult EvaluatePositionFull(string positionId, string? matchId = null)
     {
         var board = PositionId.Decode(positionId)
             ?? throw new ArgumentException($"Invalid position ID: {positionId}");
 
-        float[] output = new float[Constants.NumOutputs];
-        _evaluator.EvaluatePosition(board, output);
-        float cubelessEquity = MatchEquityTable.MoneyEquity(output);
+        var ci = BuildCubeInfo(matchId);
+        return EvaluatePositionFull(board, ci);
+    }
+
+    /// <summary>
+    /// Evaluate a position returning full 7-output result from a Board.
+    /// </summary>
+    public FullEvaluationResult EvaluatePositionFull(Board board, CubeInfo? cubeInfo = null)
+    {
+        cubeInfo ??= CubeInfo.Money();
+        return BuildFullResult(board, cubeInfo, 0);
+    }
+
+    /// <summary>
+    /// Evaluate a position at the specified number of plies returning full 7-output result.
+    /// Port of gnubgapi_evaluate_position_full_plied from gnubgapi.c.
+    /// </summary>
+    public FullEvaluationResult EvaluatePositionFullPlied(string positionId, int plies, string? matchId = null)
+    {
+        var board = PositionId.Decode(positionId)
+            ?? throw new ArgumentException($"Invalid position ID: {positionId}");
+
+        var ci = BuildCubeInfo(matchId);
+        return EvaluatePositionFullPlied(board, plies, ci);
+    }
+
+    /// <summary>
+    /// Evaluate a position at the specified number of plies returning full 7-output result from a Board.
+    /// </summary>
+    public FullEvaluationResult EvaluatePositionFullPlied(Board board, int plies, CubeInfo? cubeInfo = null)
+    {
+        cubeInfo ??= CubeInfo.Money();
+        return BuildFullResult(board, cubeInfo, plies);
+    }
+
+    /// <summary>
+    /// Build a FullEvaluationResult using GeneralEvaluationEPlied.
+    /// Port of gnubgapi_evaluate_position_full/full_plied from gnubgapi.c.
+    /// </summary>
+    private FullEvaluationResult BuildFullResult(Board board, CubeInfo ci, int plies)
+    {
+        var ec = new EvalContext
+        {
+            Cubeful = true,
+            Plies = plies,
+            UsePrune = plies >= 2,
+            Deterministic = true,
+        };
+
+        float[] arOutput = new float[Constants.NumRolloutOutputs];
+        _evaluator.GeneralEvaluationEPlied(board, arOutput, ci, ec, plies);
 
         return new FullEvaluationResult(
-            WinProbability: output[Constants.OutputWin],
-            WinGammonProbability: output[Constants.OutputWinGammon],
-            WinBackgammonProbability: output[Constants.OutputWinBackgammon],
-            LoseGammonProbability: output[Constants.OutputLoseGammon],
-            LoseBackgammonProbability: output[Constants.OutputLoseBackgammon],
-            CubelessEquity: cubelessEquity,
-            CubefulEquity: cubelessEquity); // TODO: proper cubeful equity from cube decisions
+            WinProbability: arOutput[Constants.OutputWin],
+            WinGammonProbability: arOutput[Constants.OutputWinGammon],
+            WinBackgammonProbability: arOutput[Constants.OutputWinBackgammon],
+            LoseGammonProbability: arOutput[Constants.OutputLoseGammon],
+            LoseBackgammonProbability: arOutput[Constants.OutputLoseBackgammon],
+            CubelessEquity: arOutput[Constants.OutputEquity],
+            CubefulEquity: arOutput[Constants.OutputCubefulEquity]);
+    }
+
+    /// <summary>
+    /// Build a CubeInfo from a match ID string.
+    /// Port of parse_position_and_cubeinfo() cube info logic from gnubgapi.c.
+    /// </summary>
+    private static CubeInfo BuildCubeInfo(string? matchId)
+    {
+        if (string.IsNullOrEmpty(matchId))
+            return CubeInfo.Money();
+
+        var mi = MatchId.Decode(matchId);
+        if (mi == null)
+            throw new ArgumentException($"Invalid match ID: {matchId}");
+
+        if (mi.MatchTo > 0)
+        {
+            return new CubeInfo
+            {
+                Cube = mi.Cube,
+                CubeOwner = mi.CubeOwner,
+                Move = mi.Move,
+                MatchTo = mi.MatchTo,
+                Score = [mi.Score0, mi.Score1],
+                Crawford = mi.Crawford,
+                Jacoby = mi.Jacoby,
+                Beavers = false,
+            };
+        }
+
+        return new CubeInfo
+        {
+            Cube = mi.Cube,
+            CubeOwner = mi.CubeOwner,
+            Move = mi.Move,
+            MatchTo = 0,
+            Score = [0, 0],
+            Crawford = false,
+            Jacoby = mi.Jacoby,
+            Beavers = false,
+        };
     }
 
     /// <summary>

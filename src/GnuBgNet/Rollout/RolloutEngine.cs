@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Port of rollout.c (BasicCubefulRollout / RolloutGeneral)
 
+using GnuBgNet.Encoding;
 using GnuBgNet.Evaluation;
 using GnuBgNet.MatchEquity;
 using GnuBgNet.MoveGeneration;
@@ -289,36 +290,58 @@ public sealed class RolloutEngine
                 AccumulateVarianceReduction(board, playerOnRoll, d0, d1, output, varRedn);
             }
 
-            // Find best move at the configured chequer ply depth
+            // Find best move at the configured chequer ply depth.
+            // Uses FindnSaveBestMoves with move filters when chequerPlies > 0,
+            // matching GnuBG's BasicCubefulRollout which calls FindBestMove
+            // with defaultFilters during rollout play-out.
             var activeBoard = playerOnRoll ? board : board.Swapped();
-            var ml = MoveGenerator.GenerateMoves(activeBoard, d0, d1);
 
-            if (ml.Moves.Count > 0)
+            if (chequerPlies > 0)
             {
-                Board bestBoard = activeBoard;
-                float bestScore = float.MinValue;
-
-                foreach (var move in ml.Moves)
+                // Use FindnSaveBestMoves with move filters (matches C: FindBestMove + defaultFilters)
+                var ec = new EvalContext
                 {
-                    var newBoard = MoveGenerator.ApplyMove(activeBoard, move);
-                    var swapped = newBoard.Swapped();
+                    Cubeful = settings.Cubeful,
+                    Plies = chequerPlies,
+                    UsePrune = chequerPlies >= 2,
+                    Deterministic = true,
+                };
+                var ml = new MoveList();
+                _evaluator.FindnSaveBestMoves(ml, activeBoard, d0, d1, ec);
 
-                    if (chequerPlies > 0)
-                        _evaluator.EvaluatePositionPlied(swapped, output, chequerPlies - 1);
-                    else
-                        _evaluator.EvaluatePosition(swapped, output);
-
-                    Evaluator.InvertEvaluation(output);
-                    float score = MatchEquityTable.MoneyEquity(output);
-
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        bestBoard = newBoard;
-                    }
+                if (ml.Moves.Count > 0 && ml.BestIndex >= 0)
+                {
+                    var bestBoard = PositionId.FromKey(ml.Moves[ml.BestIndex].Key);
+                    board = playerOnRoll ? bestBoard : bestBoard.Swapped();
                 }
+            }
+            else
+            {
+                // 0-ply: evaluate all moves directly (no filtering needed)
+                var ml = MoveGenerator.GenerateMoves(activeBoard, d0, d1);
 
-                board = playerOnRoll ? bestBoard : bestBoard.Swapped();
+                if (ml.Moves.Count > 0)
+                {
+                    Board bestBoard = activeBoard;
+                    float bestScore = float.MinValue;
+
+                    foreach (var move in ml.Moves)
+                    {
+                        var newBoard = MoveGenerator.ApplyMove(activeBoard, move);
+                        var swapped = newBoard.Swapped();
+                        _evaluator.EvaluatePosition(swapped, output);
+                        Evaluator.InvertEvaluation(output);
+                        float score = MatchEquityTable.MoneyEquity(output);
+
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestBoard = newBoard;
+                        }
+                    }
+
+                    board = playerOnRoll ? bestBoard : bestBoard.Swapped();
+                }
             }
 
             playerOnRoll = !playerOnRoll;

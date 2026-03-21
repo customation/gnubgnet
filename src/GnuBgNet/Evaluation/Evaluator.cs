@@ -994,8 +994,10 @@ public sealed class Evaluator
             EvaluatePositionCubeful3(board, arOutput, ref rCubeful,
                 [ci], 1, ci, ec, nPlies, false);
 
-            arOutput[Constants.OutputEquity] = CubeDecision.UtilityMatch(arOutput, ci,
-                MatchEquity.MatchEquityTable.ComputeDefault());
+            arOutput[Constants.OutputEquity] = ci.MatchTo > 0
+                ? CubeDecision.UtilityMatch(arOutput, ci,
+                    MatchEquity.MatchEquityTable.ComputeDefault())
+                : MatchEquityTable.MoneyEquity(arOutput);
             arOutput[Constants.OutputCubefulEquity] = rCubeful;
         }
         else
