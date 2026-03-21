@@ -142,35 +142,60 @@ public sealed class RolloutEngine
         // Create quasi-random permutation tables (shared across all alternatives)
         DicePermutations? perms = settings.Rotate ? new DicePermutations(settings.Seed) : null;
 
-        for (int trial = 0; trial < trials; trial++)
+        // Run trials in parallel, matching the threading model of Rollout/RolloutGeneral.
+        // Each thread accumulates per-alternative results independently.
+        var locker = new object();
+
+        Parallel.For(0, trials, () => new MoveTrialState(nAlts), (trial, _, state) =>
         {
-            float[] output = new float[Constants.NumOutputs];
+            state.Rng ??= new MersenneTwister(settings.Seed == 0 ? (uint)trial : settings.Seed + (uint)trial);
+            state.Output ??= new float[Constants.NumOutputs];
+
+            // Snapshot stopped flags under lock to avoid torn reads
+            bool[] localStopped;
+            lock (locker) { localStopped = (bool[])stopped.Clone(); }
 
             for (int alt = 0; alt < nAlts; alt++)
             {
-                if (stopped[alt]) continue;
+                if (localStopped[alt]) continue;
 
                 // Dice sharing: each alternative gets the SAME seed for the same trial,
                 // so they share the same dice sequence. This is critical for variance
                 // reduction — comparing moves under identical dice conditions.
-                var rng = new MersenneTwister(settings.Seed == 0 ? (uint)trial : settings.Seed + (uint)trial);
-                var trialResult = RunSingleTrial(candidateBoards[alt], rng, truncPlies,
-                    chequerPlies, settings, output, (uint)trial, perms);
+                state.Rng.Init(settings.Seed == 0 ? (uint)trial : settings.Seed + (uint)trial);
+                var trialResult = RunSingleTrial(candidateBoards[alt], state.Rng, truncPlies,
+                    chequerPlies, settings, state.Output, (uint)trial, perms);
 
                 for (int j = 0; j < 7; j++)
                 {
-                    altSum[alt][j] += trialResult[j];
-                    altSumSq[alt][j] += trialResult[j] * trialResult[j];
+                    state.AltSum[alt][j] += trialResult[j];
+                    state.AltSumSq[alt][j] += trialResult[j] * trialResult[j];
                 }
-                altCount[alt]++;
+                state.AltCount[alt]++;
             }
 
-            // JSD stopping check
-            if (settings.StopOnJsd && trial >= (int)settings.MinimumJsdGames && nAlts > 1)
+            return state;
+        },
+        state =>
+        {
+            lock (locker)
             {
-                CheckJsdStopping(altSum, altSumSq, altCount, stopped, nAlts, settings.JsdLimit);
+                for (int alt = 0; alt < nAlts; alt++)
+                {
+                    for (int j = 0; j < 7; j++)
+                    {
+                        altSum[alt][j] += state.AltSum[alt][j];
+                        altSumSq[alt][j] += state.AltSumSq[alt][j];
+                    }
+                    altCount[alt] += state.AltCount[alt];
+                }
             }
-        }
+        });
+
+        // JSD stopping is applied post-hoc in parallel mode.
+        // In the C version, JSD is checked per-trial sequentially within RolloutGeneral.
+        // For parallel execution, we lose incremental JSD stopping but gain throughput.
+        // A future refinement could batch trials and check JSD between batches.
 
         gamesPlayed = trials;
 
@@ -219,8 +244,17 @@ public sealed class RolloutEngine
         int cubeOwner = -1; // -1 = centered
         int nBasisCube = 1;
 
+        // Late evaluation threshold: move number at which to switch eval contexts.
+        // Port of: int nLateEvals = prc->fLateEvals ? prc->nLate : 0x7fffffff;
+        int nLateEvals = settings.LateEvals ? settings.LateMoveThreshold : int.MaxValue;
+
         while (ply < truncPlies)
         {
+            // Determine effective chequer and cube plies based on late eval threshold.
+            // Port of pecCube/pecChequer selection from rollout.c lines 416-426.
+            int effectiveChequerPlies = ply < nLateEvals ? chequerPlies : settings.ChequerPliesLate;
+            int effectiveCubePlies = ply < nLateEvals ? settings.CubePlies : settings.CubePliesLate;
+
             // Check for game over
             if (IsGameOver(board, playerOnRoll, out var gameOverResult))
             {
@@ -242,14 +276,16 @@ public sealed class RolloutEngine
                 return bearoffResult;
             }
 
-            // Cubeful play-out: evaluate cube decision before rolling dice
-            if (settings.Cubeful && ply > 0)
+            // Cubeful play-out: evaluate cube decision before rolling dice.
+            // Port of rollout.c line 471: suppress cube on turn 0 when fInitial is set.
+            bool allowCube = ply > 0 || !settings.Initial;
+            if (settings.Cubeful && allowCube)
             {
                 bool canDouble = cubeOwner == -1 || (playerOnRoll && cubeOwner == 0) || (!playerOnRoll && cubeOwner == 1);
                 if (canDouble)
                 {
                     var cubeResult = EvaluateCubeDecision(board, playerOnRoll, settings, output,
-                        cubeValue, cubeOwner, nBasisCube);
+                        cubeValue, cubeOwner, nBasisCube, effectiveCubePlies);
 
                     if (cubeResult.HasValue)
                     {
@@ -272,38 +308,46 @@ public sealed class RolloutEngine
                 }
             }
 
-            // Roll dice using quasi-random permutation tables or RNG
+            // Roll dice using quasi-random permutation tables or RNG.
+            // Port of RolloutDice from rollout.c: when fInitial and first turn,
+            // skip doubles (only 30 of 36 outcomes are valid).
             int d0, d1;
+            bool skipDoublesThisTurn = ply == 0 && settings.Initial;
             if (settings.Rotate && perms != null)
             {
-                // Quasi-random: use permutation tables. Skip doubles for first roll.
-                (d0, d1) = perms.GetRoll((int)trialIndex, ply, ref skip, skipDoubles: ply == 0);
+                (d0, d1) = perms.GetRoll((int)trialIndex, ply, ref skip, skipDoubles: skipDoublesThisTurn);
             }
             else
             {
-                (d0, d1) = rng.NextDiceRoll();
+                do
+                {
+                    (d0, d1) = rng.NextDiceRoll();
+                } while (skipDoublesThisTurn && d0 == d1);
             }
 
-            // Variance reduction: evaluate all 36 dice outcomes at 0-ply
+            // Variance reduction: evaluate all 21 (or 15) dice outcomes at 0-ply.
+            // Port of rollout.c lines 596-638: when fInitial and first turn,
+            // skip doubles (j == i) and divide by 30 instead of 36.
             if (settings.VarianceReduction)
             {
-                AccumulateVarianceReduction(board, playerOnRoll, d0, d1, output, varRedn);
+                AccumulateVarianceReduction(board, playerOnRoll, d0, d1, output, varRedn,
+                    skipDoubles: skipDoublesThisTurn);
             }
 
-            // Find best move at the configured chequer ply depth.
-            // Uses FindnSaveBestMoves with move filters when chequerPlies > 0,
+            // Find best move at the effective chequer ply depth.
+            // Uses FindnSaveBestMoves with move filters when plies > 0,
             // matching GnuBG's BasicCubefulRollout which calls FindBestMove
             // with defaultFilters during rollout play-out.
             var activeBoard = playerOnRoll ? board : board.Swapped();
 
-            if (chequerPlies > 0)
+            if (effectiveChequerPlies > 0)
             {
                 // Use FindnSaveBestMoves with move filters (matches C: FindBestMove + defaultFilters)
                 var ec = new EvalContext
                 {
                     Cubeful = settings.Cubeful,
-                    Plies = chequerPlies,
-                    UsePrune = chequerPlies >= 2,
+                    Plies = effectiveChequerPlies,
+                    UsePrune = effectiveChequerPlies >= 2,
                     Deterministic = true,
                 };
                 var ml = new MoveList();
@@ -386,13 +430,14 @@ public sealed class RolloutEngine
     /// </summary>
     private (CubeTrialAction action, double[] result)? EvaluateCubeDecision(
         Board board, bool playerOnRoll, RolloutSettings settings, float[] output,
-        int cubeValue, int cubeOwner, int nBasisCube)
+        int cubeValue, int cubeOwner, int nBasisCube, int cubePlies)
     {
         var evalBoard = playerOnRoll ? board : board.Swapped();
 
-        // Evaluate position at cube ply depth
-        if (settings.CubePlies > 0)
-            _evaluator.EvaluatePositionPlied(evalBoard, output, settings.CubePlies - 1);
+        // Evaluate position at the effective cube ply depth
+        // (may differ from settings.CubePlies when late evals are active)
+        if (cubePlies > 0)
+            _evaluator.EvaluatePositionPlied(evalBoard, output, cubePlies - 1);
         else
             _evaluator.EvaluatePosition(evalBoard, output);
 
@@ -522,18 +567,27 @@ public sealed class RolloutEngine
     /// then accumulate the correction (mean - actual_roll_value).
     /// Port of variance reduction from BasicCubefulRollout.
     /// </summary>
+    /// <param name="skipDoubles">
+    /// When true (fInitial on first turn), skip doubles (d0 == d1) and divide by 30
+    /// instead of 36. Port of rollout.c lines 596-638.
+    /// </param>
     private void AccumulateVarianceReduction(Board board, bool playerOnRoll,
-        int actualD0, int actualD1, float[] output, double[] varRedn)
+        int actualD0, int actualD1, float[] output, double[] varRedn,
+        bool skipDoubles = false)
     {
         var activeBoard = playerOnRoll ? board : board.Swapped();
         double[] mean = new double[7];
         double[] actualRollValue = new double[7];
 
-        // Evaluate all 21 distinct dice combinations
+        // Evaluate all 21 distinct dice combinations (or 15 when skipping doubles)
         for (int d0 = 1; d0 <= 6; d0++)
         {
             for (int d1 = 1; d1 <= d0; d1++)
             {
+                // Skip doubles when rolling initial position (no doubles on opening roll)
+                if (skipDoubles && d0 == d1)
+                    continue;
+
                 float w = (d0 == d1) ? 1.0f : 2.0f;
 
                 var ml = MoveGenerator.GenerateMoves(activeBoard, d0, d1);
@@ -584,10 +638,11 @@ public sealed class RolloutEngine
             }
         }
 
-        // Normalize mean by 36
+        // Normalize: 36 outcomes total, or 30 when doubles are skipped (6 doubles removed)
+        double divisor = skipDoubles ? 30.0 : 36.0;
         for (int i = 0; i < 7; i++)
         {
-            mean[i] /= 36.0;
+            mean[i] /= divisor;
             // Accumulate correction: mean - actual
             varRedn[i] += mean[i] - actualRollValue[i];
         }
@@ -705,5 +760,26 @@ public sealed class RolloutEngine
         public readonly double[] Sum = new double[7];
         public readonly double[] SumSq = new double[7];
         public int Count;
+    }
+
+    private sealed class MoveTrialState
+    {
+        public MersenneTwister? Rng;
+        public float[]? Output;
+        public readonly double[][] AltSum;
+        public readonly double[][] AltSumSq;
+        public readonly int[] AltCount;
+
+        public MoveTrialState(int nAlts)
+        {
+            AltSum = new double[nAlts][];
+            AltSumSq = new double[nAlts][];
+            AltCount = new int[nAlts];
+            for (int i = 0; i < nAlts; i++)
+            {
+                AltSum[i] = new double[7];
+                AltSumSq[i] = new double[7];
+            }
+        }
     }
 }

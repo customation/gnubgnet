@@ -20,6 +20,14 @@ public sealed class MersenneTwister
 
     public MersenneTwister(uint seed)
     {
+        Init(seed);
+    }
+
+    /// <summary>
+    /// Re-initialize the generator with a new seed. Resets all internal state.
+    /// </summary>
+    public void Init(uint seed)
+    {
         _mt[0] = seed;
         for (_mti = 1; _mti < N; _mti++)
         {

@@ -23,6 +23,7 @@ public sealed class Evaluator
     private readonly NetworkSet _nets;
     private readonly EvalCache _mainCache;
     private readonly EvalCache _pruneCache;
+    private readonly MatchEquity.MatchEquityTable _met;
 
     internal BearoffDatabase? OneSidedBearoff { get; }
     internal BearoffDatabase? TwoSidedBearoff { get; }
@@ -40,7 +41,8 @@ public sealed class Evaluator
         BearoffDatabase? twoSidedBearoff = null,
         BearoffDatabase? hypergammon1 = null,
         BearoffDatabase? hypergammon2 = null,
-        BearoffDatabase? hypergammon3 = null)
+        BearoffDatabase? hypergammon3 = null,
+        MatchEquity.MatchEquityTable? met = null)
     {
         _nets = nets;
         OneSidedBearoff = oneSidedBearoff;
@@ -48,6 +50,7 @@ public sealed class Evaluator
         HypergammonBearoff1 = hypergammon1;
         HypergammonBearoff2 = hypergammon2;
         HypergammonBearoff3 = hypergammon3;
+        _met = met ?? MatchEquity.MatchEquityTable.ComputeDefault();
         _mainCache = new EvalCache(Constants.CacheSizeMainLog2);
         _pruneCache = new EvalCache(Constants.CacheSizePruneLog2);
     }
@@ -305,9 +308,8 @@ public sealed class Evaluator
 
             if (ci.MatchTo > 0)
             {
-                var met = MatchEquity.MatchEquityTable.ComputeDefault();
                 arEval[Constants.OutputCubefulEquity] =
-                    CubeDecision.Mwc2Eq(arEval[Constants.OutputCubefulEquity], ci, met);
+                    CubeDecision.Mwc2Eq(arEval[Constants.OutputCubefulEquity], ci, _met);
             }
         }
         else
@@ -466,11 +468,11 @@ public sealed class Evaluator
     /// Compute equity from output, using UtilityME for match play and MoneyEquity for money.
     /// Port of UtilityME() dispatch from eval.c.
     /// </summary>
-    private static float ComputeEquity(ReadOnlySpan<float> output, CubeInfo? ci)
+    private float ComputeEquity(ReadOnlySpan<float> output, CubeInfo? ci)
     {
         if (ci != null && ci.MatchTo > 0)
             return CubeDecision.UtilityMatch(output, ci,
-                MatchEquity.MatchEquityTable.ComputeDefault());
+                _met);
         return MatchEquityTable.MoneyEquity(output);
     }
 
@@ -996,7 +998,7 @@ public sealed class Evaluator
 
             arOutput[Constants.OutputEquity] = ci.MatchTo > 0
                 ? CubeDecision.UtilityMatch(arOutput, ci,
-                    MatchEquity.MatchEquityTable.ComputeDefault())
+                    _met)
                 : MatchEquityTable.MoneyEquity(arOutput);
             arOutput[Constants.OutputCubefulEquity] = rCubeful;
         }
@@ -1005,7 +1007,7 @@ public sealed class Evaluator
             EvaluatePositionPlied(board, arOutput, nPlies, ec.UsePrune, ec);
             arOutput[Constants.OutputEquity] = ci.MatchTo > 0
                 ? CubeDecision.UtilityMatch(arOutput, ci,
-                    MatchEquity.MatchEquityTable.ComputeDefault())
+                    _met)
                 : MatchEquityTable.MoneyEquity(arOutput);
             arOutput[Constants.OutputCubefulEquity] = 0.0f;
         }
@@ -1221,7 +1223,6 @@ public sealed class Evaluator
                 {
                     // Match play bearoff: derive cube efficiency from exact money cubeful
                     // then use Cl2CfMatch with that derived efficiency
-                    var met = MatchEquity.MatchEquityTable.ComputeDefault();
                     float rCl = arEquity[0]; // exact cubeless
                     float rCfMoney = aci[ici].CubeOwner == -1 ? arEquity[2]
                         : aci[ici].CubeOwner == aci[ici].Move ? arEquity[1]
@@ -1233,7 +1234,7 @@ public sealed class Evaluator
                     float derivedCubeX = Math.Abs(denom) > 1e-6f
                         ? Math.Clamp((rCfMoney - rCl) / denom, 0.0f, 1.0f)
                         : rCubeX;
-                    arCf[ici] = CubeDecision.Cl2CfMatch(arOutput, aci[ici], met, derivedCubeX);
+                    arCf[ici] = CubeDecision.Cl2CfMatch(arOutput, aci[ici], _met, derivedCubeX);
                 }
                 else if (aci[ici].MatchTo == 0)
                 {
@@ -1244,8 +1245,7 @@ public sealed class Evaluator
                 else
                 {
                     // Match play
-                    var met = MatchEquity.MatchEquityTable.ComputeDefault();
-                    arCf[ici] = CubeDecision.Cl2CfMatch(arOutput, aci[ici], met, rCubeX);
+                    arCf[ici] = CubeDecision.Cl2CfMatch(arOutput, aci[ici], _met, rCubeX);
                 }
             }
 

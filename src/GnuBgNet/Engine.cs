@@ -38,7 +38,7 @@ public sealed class Engine : IDisposable
         _hyper1 = hyper1;
         _hyper2 = hyper2;
         _hyper3 = hyper3;
-        _evaluator = new Evaluator(nets, osBearoff, tsBearoff, hyper1, hyper2, hyper3);
+        _evaluator = new Evaluator(nets, osBearoff, tsBearoff, hyper1, hyper2, hyper3, met);
         _met = met;
     }
 
@@ -120,36 +120,17 @@ public sealed class Engine : IDisposable
         var board = PositionId.Decode(positionId)
             ?? throw new ArgumentException($"Invalid position ID: {positionId}");
 
-        float[] output = new float[Constants.NumOutputs];
-        _evaluator.EvaluatePosition(board, output);
-
-        float equity = MatchEquityTable.MoneyEquity(output);
-
-        return new EvaluationResult(
-            Win: output[Constants.OutputWin],
-            WinGammon: output[Constants.OutputWinGammon],
-            WinBackgammon: output[Constants.OutputWinBackgammon],
-            LoseGammon: output[Constants.OutputLoseGammon],
-            LoseBackgammon: output[Constants.OutputLoseBackgammon],
-            Equity: equity);
+        var ci = BuildCubeInfo(matchId);
+        return BuildEvaluationResult(board, ci, 0);
     }
 
     /// <summary>
     /// Evaluate a position from a Board directly.
     /// </summary>
-    public EvaluationResult EvaluatePosition(Board board)
+    public EvaluationResult EvaluatePosition(Board board, CubeInfo? cubeInfo = null)
     {
-        float[] output = new float[Constants.NumOutputs];
-        _evaluator.EvaluatePosition(board, output);
-        float equity = MatchEquityTable.MoneyEquity(output);
-
-        return new EvaluationResult(
-            Win: output[Constants.OutputWin],
-            WinGammon: output[Constants.OutputWinGammon],
-            WinBackgammon: output[Constants.OutputWinBackgammon],
-            LoseGammon: output[Constants.OutputLoseGammon],
-            LoseBackgammon: output[Constants.OutputLoseBackgammon],
-            Equity: equity);
+        cubeInfo ??= CubeInfo.Money();
+        return BuildEvaluationResult(board, cubeInfo, 0);
     }
 
     /// <summary>
@@ -161,17 +142,46 @@ public sealed class Engine : IDisposable
         var board = PositionId.Decode(positionId)
             ?? throw new ArgumentException($"Invalid position ID: {positionId}");
 
-        return EvaluatePositionPlied(board, plies);
+        var ci = BuildCubeInfo(matchId);
+        return BuildEvaluationResult(board, ci, plies);
     }
 
     /// <summary>
     /// Evaluate a position at the specified number of plies from a Board.
     /// </summary>
-    public EvaluationResult EvaluatePositionPlied(Board board, int plies)
+    public EvaluationResult EvaluatePositionPlied(Board board, int plies, CubeInfo? cubeInfo = null)
     {
+        cubeInfo ??= CubeInfo.Money();
+        return BuildEvaluationResult(board, cubeInfo, plies);
+    }
+
+    /// <summary>
+    /// Build an EvaluationResult with cubeful equity.
+    /// Port of gnubgapi_evaluate_position/plied from gnubgapi.c:
+    /// first eval cubeless to get equity, then a second eval with fCubeful=TRUE
+    /// for cubeful equity via GeneralEvaluationEPlied.
+    /// </summary>
+    private EvaluationResult BuildEvaluationResult(Board board, CubeInfo ci, int plies)
+    {
+        // First evaluation: cubeless (matches C: GeneralEvaluationE with ecBasic)
         float[] output = new float[Constants.NumOutputs];
-        _evaluator.EvaluatePositionPlied(board, output, plies);
+        if (plies > 0)
+            _evaluator.EvaluatePositionPlied(board, output, plies);
+        else
+            _evaluator.EvaluatePosition(board, output);
+
         float equity = MatchEquityTable.MoneyEquity(output);
+
+        // Second evaluation: cubeful (matches C: ec.fCubeful = 1; GeneralEvaluationE)
+        var ec = new EvalContext
+        {
+            Cubeful = true,
+            Plies = plies,
+            UsePrune = plies >= 2,
+            Deterministic = true,
+        };
+        float[] arCubeful = new float[Constants.NumRolloutOutputs];
+        _evaluator.GeneralEvaluationEPlied(board, arCubeful, ci, ec, plies);
 
         return new EvaluationResult(
             Win: output[Constants.OutputWin],
@@ -179,7 +189,8 @@ public sealed class Engine : IDisposable
             WinBackgammon: output[Constants.OutputWinBackgammon],
             LoseGammon: output[Constants.OutputLoseGammon],
             LoseBackgammon: output[Constants.OutputLoseBackgammon],
-            Equity: equity);
+            Equity: equity,
+            CubefulEquity: arCubeful[Constants.OutputCubefulEquity]);
     }
 
     /// <summary>
@@ -563,7 +574,7 @@ public sealed class Engine : IDisposable
         float[] output = new float[Constants.NumOutputs];
         osr.RaceProbs(board, nGames, output, out _, out _);
         float equity = MatchEquityTable.MoneyEquity(output);
-        return new EvaluationResult(output[0], output[1], output[2], output[3], output[4], equity);
+        return new EvaluationResult(output[0], output[1], output[2], output[3], output[4], equity, equity);
     }
 
     /// <summary>
