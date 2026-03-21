@@ -249,7 +249,7 @@ public static class PositionId
         return table;
     }
 
-    private static uint PositionF(uint fBits, uint n, uint r)
+    internal static uint PositionF(uint fBits, uint n, uint r)
     {
         if (n == r)
             return 0;

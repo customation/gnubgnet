@@ -53,7 +53,7 @@ public static class MoveGenerator
 
     /// <summary>
     /// Apply a move to a board (for use by evaluator).
-    /// Returns a new board with the move applied and sides swapped.
+    /// Returns a new board with the move applied (sides NOT swapped).
     /// </summary>
     public static Board ApplyMove(Board board, Move move)
     {
@@ -62,6 +62,31 @@ public static class MoveGenerator
         {
             int src = move.AnMove[i * 2];
             int nRoll = src - move.AnMove[i * 2 + 1];
+            ApplySubMove(newBoard, src, nRoll);
+        }
+        return newBoard;
+    }
+
+    /// <summary>
+    /// Apply a raw move (from/to pairs in int[8]) to a board.
+    /// Returns a new board with the move applied (sides NOT swapped).
+    /// Port of ApplyMove() from eval.c for use with MAT parsed moves.
+    /// </summary>
+    public static Board ApplyMoveRaw(Board board, int[] anMove)
+    {
+        var newBoard = board.Clone();
+        for (int i = 0; i < 8; i += 2)
+        {
+            int src = anMove[i];
+            int dest = anMove[i + 1];
+            if (src < 0) break; // -1 terminated
+
+            int nRoll;
+            if (dest < 0)
+                nRoll = src + 1; // bear off: roll = src + 1 (e.g., point 5 → off = roll of 6)
+            else
+                nRoll = src - dest;
+
             ApplySubMove(newBoard, src, nRoll);
         }
         return newBoard;

@@ -26,15 +26,28 @@ public sealed class Evaluator
 
     internal BearoffDatabase? OneSidedBearoff { get; }
     internal BearoffDatabase? TwoSidedBearoff { get; }
+    internal BearoffDatabase? HypergammonBearoff1 { get; }
+    internal BearoffDatabase? HypergammonBearoff2 { get; }
+    internal BearoffDatabase? HypergammonBearoff3 { get; }
 
     internal bool HasOneSidedBearoff => OneSidedBearoff != null;
     internal bool HasTwoSidedBearoff => TwoSidedBearoff != null;
+    internal bool HasHypergammon1 => HypergammonBearoff1 != null;
+    internal bool HasHypergammon2 => HypergammonBearoff2 != null;
+    internal bool HasHypergammon3 => HypergammonBearoff3 != null;
 
-    public Evaluator(NetworkSet nets, BearoffDatabase? oneSidedBearoff = null, BearoffDatabase? twoSidedBearoff = null)
+    public Evaluator(NetworkSet nets, BearoffDatabase? oneSidedBearoff = null,
+        BearoffDatabase? twoSidedBearoff = null,
+        BearoffDatabase? hypergammon1 = null,
+        BearoffDatabase? hypergammon2 = null,
+        BearoffDatabase? hypergammon3 = null)
     {
         _nets = nets;
         OneSidedBearoff = oneSidedBearoff;
         TwoSidedBearoff = twoSidedBearoff;
+        HypergammonBearoff1 = hypergammon1;
+        HypergammonBearoff2 = hypergammon2;
+        HypergammonBearoff3 = hypergammon3;
         _mainCache = new EvalCache(Constants.CacheSizeMainLog2);
         _pruneCache = new EvalCache(Constants.CacheSizePruneLog2);
     }
@@ -55,26 +68,48 @@ public sealed class Evaluator
     /// </summary>
     public void EvaluatePositionPlied(Board board, Span<float> output, int nPlies, bool usePrune = true)
     {
-        var key = PositionId.ToKey(board);
-        int evalContext = EvalCache.ComputeEvalKey(nPlies, false, usePrune);
+        EvaluatePositionPlied(board, output, nPlies, usePrune, null);
+    }
 
-        uint l = _mainCache.Lookup(key, evalContext, output);
-        if (l == EvalCache.CacheHit)
-            return;
+    /// <summary>
+    /// Evaluate a position at the specified number of plies, with optional noise.
+    /// Port of EvaluatePositionCache() from eval.c.
+    /// When ec has noise, cache is bypassed (non-deterministic results cannot be cached).
+    /// </summary>
+    public void EvaluatePositionPlied(Board board, Span<float> output, int nPlies, bool usePrune, EvalContext? ec)
+    {
+        bool hasNoise = ec != null && ec.Noise != 0.0f;
 
-        var pc = Classifier.Classify(board, this);
-        EvaluatePositionFull(board, output, nPlies, pc, usePrune);
+        if (!hasNoise)
+        {
+            var key = PositionId.ToKey(board);
+            int evalContext = EvalCache.ComputeEvalKey(nPlies, false, usePrune);
 
-        _mainCache.Add(key, evalContext, output, l);
+            uint l = _mainCache.Lookup(key, evalContext, output);
+            if (l == EvalCache.CacheHit)
+                return;
+
+            var pc = Classifier.Classify(board, this);
+            EvaluatePositionFull(board, output, nPlies, pc, usePrune, ec);
+
+            _mainCache.Add(key, evalContext, output, l);
+        }
+        else
+        {
+            // Noisy evaluations cannot be cached
+            var pc = Classifier.Classify(board, this);
+            EvaluatePositionFull(board, output, nPlies, pc, usePrune, ec);
+        }
     }
 
     /// <summary>
     /// Full evaluation: leaf (0-ply) or recursive (n-ply).
     /// Port of EvaluatePositionFull() from eval.c.
     /// </summary>
-    internal void EvaluatePositionFull(Board board, Span<float> output, int nPlies, PositionClass pc, bool usePrune)
+    internal void EvaluatePositionFull(Board board, Span<float> output, int nPlies, PositionClass pc, bool usePrune,
+        EvalContext? ec = null)
     {
-        if (pc > PositionClass.Over && nPlies > 0)
+        if (pc > PositionClass.BearoffTwoSided && nPlies > 0)
         {
             // Internal node: recurse over all 21 dice rolls
             for (int i = 0; i < Constants.NumOutputs; i++)
@@ -94,7 +129,7 @@ public sealed class Evaluator
                     // Swap sides and evaluate at n-1 ply
                     newBoard.SwapSides();
 
-                    EvaluatePositionPlied(newBoard, variationOutput, nPlies - 1, usePrune);
+                    EvaluatePositionPlied(newBoard, variationOutput, nPlies - 1, usePrune, ec);
 
                     for (int i = 0; i < Constants.NumOutputs; i++)
                         output[i] += w * variationOutput[i];
@@ -112,6 +147,16 @@ public sealed class Evaluator
         {
             // Leaf node: static evaluation
             EvaluatePositionByClass(board, output, pc);
+
+            // Apply noise at leaf nodes (matching C: pec->rNoise check after acef[pc]())
+            if (ec != null && ec.Noise > 0.0f && pc != PositionClass.Over)
+            {
+                for (int i = 0; i < Constants.NumOutputs; i++)
+                {
+                    output[i] += Noise(ec, board, i);
+                    output[i] = Math.Clamp(output[i], 0.0f, 1.0f);
+                }
+            }
         }
     }
 
@@ -120,7 +165,8 @@ public sealed class Evaluator
     /// Uses pruning nets when possible for speed.
     /// Port of FindBestMoveInEval() from eval.c.
     /// </summary>
-    private Board FindBestMoveForRoll(Board board, int n0, int n1, bool usePrune)
+    private Board FindBestMoveForRoll(Board board, int n0, int n1, bool usePrune,
+        CubeInfo? ci = null)
     {
         var ml = MoveGenerator.GenerateMoves(board, n0, n1);
 
@@ -134,14 +180,14 @@ public sealed class Evaluator
 
         if (usePrune && ml.Moves.Count > pruneMoves)
         {
-            if (TryScoreWithPruningNets(ml, board))
+            if (TryScoreWithPruningNets(ml, board, ci))
             {
                 var candidates = SelectTopMoves(ml, pruneMoves);
-                return ScoreCandidatesAndGetBest(candidates);
+                return ScoreCandidatesAndGetBest(candidates, ci);
             }
         }
 
-        return ScoreAllMovesAndGetBest(ml);
+        return ScoreAllMovesAndGetBest(ml, ci);
     }
 
     /// <summary>
@@ -273,7 +319,7 @@ public sealed class Evaluator
 
             InvertEvaluation(arEval);
 
-            arEval[Constants.OutputEquity] = MatchEquityTable.MoneyEquity(arEval);
+            arEval[Constants.OutputEquity] = ComputeEquity(arEval, ci);
             arEval[Constants.OutputCubefulEquity] = arEval[Constants.OutputEquity];
         }
 
@@ -302,8 +348,9 @@ public sealed class Evaluator
     /// <summary>
     /// Score all moves using pruning neural nets.
     /// Returns false if pruning isn't possible (e.g., mixed position classes).
+    /// Port of FindBestMoveInEval() pruning path from eval.c.
     /// </summary>
-    private bool TryScoreWithPruningNets(MoveList ml, Board board)
+    private bool TryScoreWithPruningNets(MoveList ml, Board board, CubeInfo? ci = null)
     {
         PositionClass evalClass = PositionClass.Over;
         Span<float> arOutput = stackalloc float[Constants.NumOutputs];
@@ -336,12 +383,18 @@ public sealed class Evaluator
                     _ => _nets.PruneContact,
                 };
                 net.Evaluate(inputs, arOutput);
+
+                // Correct backgammon probabilities for race positions
+                if (evalClass == PositionClass.Race)
+                    EvalRaceBG(moveBoard, arOutput);
+
                 SanityCheck(moveBoard, arOutput);
 
                 _pruneCache.Add(key, 0, arOutput, l);
             }
 
-            ml.Moves[i].Score = MatchEquityTable.MoneyEquity(arOutput);
+            // Use UtilityME for match play, MoneyEquity for money play
+            ml.Moves[i].Score = ComputeEquity(arOutput, ci);
         }
 
         return true;
@@ -360,7 +413,7 @@ public sealed class Evaluator
     /// <summary>
     /// Score a set of candidate moves at 0-ply and return the board for the best one.
     /// </summary>
-    private Board ScoreCandidatesAndGetBest(List<Move> candidates)
+    private Board ScoreCandidatesAndGetBest(List<Move> candidates, CubeInfo? ci = null)
     {
         float bestScore = float.MinValue;
         int bestIdx = 0;
@@ -372,7 +425,7 @@ public sealed class Evaluator
             EvaluatePosition(moveBoard, output);
             InvertEvaluation(output);
 
-            float score = MatchEquityTable.MoneyEquity(output);
+            float score = ComputeEquity(output, ci);
             if (score > bestScore)
             {
                 bestScore = score;
@@ -386,7 +439,7 @@ public sealed class Evaluator
     /// <summary>
     /// Score all moves at 0-ply and return the board for the best one.
     /// </summary>
-    private Board ScoreAllMovesAndGetBest(MoveList ml)
+    private Board ScoreAllMovesAndGetBest(MoveList ml, CubeInfo? ci = null)
     {
         float bestScore = float.MinValue;
         int bestIdx = 0;
@@ -398,7 +451,7 @@ public sealed class Evaluator
             EvaluatePosition(moveBoard, output);
             InvertEvaluation(output);
 
-            float score = MatchEquityTable.MoneyEquity(output);
+            float score = ComputeEquity(output, ci);
             if (score > bestScore)
             {
                 bestScore = score;
@@ -407,6 +460,18 @@ public sealed class Evaluator
         }
 
         return PositionId.FromKey(ml.Moves[bestIdx].Key);
+    }
+
+    /// <summary>
+    /// Compute equity from output, using UtilityME for match play and MoneyEquity for money.
+    /// Port of UtilityME() dispatch from eval.c.
+    /// </summary>
+    private static float ComputeEquity(ReadOnlySpan<float> output, CubeInfo? ci)
+    {
+        if (ci != null && ci.MatchTo > 0)
+            return CubeDecision.UtilityMatch(output, ci,
+                MatchEquity.MatchEquityTable.ComputeDefault());
+        return MatchEquityTable.MoneyEquity(output);
     }
 
     private static int FloorLog2(int n)
@@ -426,6 +491,15 @@ public sealed class Evaluator
         {
             case PositionClass.Over:
                 EvalOver(board, output);
+                break;
+            case PositionClass.Hypergammon1:
+                HypergammonBearoff1!.Evaluate(board, output);
+                break;
+            case PositionClass.Hypergammon2:
+                HypergammonBearoff2!.Evaluate(board, output);
+                break;
+            case PositionClass.Hypergammon3:
+                HypergammonBearoff3!.Evaluate(board, output);
                 break;
             case PositionClass.BearoffTwoSided:
                 TwoSidedBearoff!.Evaluate(board, output);
@@ -621,9 +695,16 @@ public sealed class Evaluator
     /// Evaluate a completed game (one side has all pieces off).
     /// Port of EvalOver() from eval.c.
     /// </summary>
-    private static void EvalOver(Board board, Span<float> output)
+    private static void EvalOver(Board board, Span<float> output,
+        BackgammonVariation variation = BackgammonVariation.Standard)
     {
-        const int n = 15; // standard checkers count
+        int n = variation switch
+        {
+            BackgammonVariation.Hypergammon1 => 1,
+            BackgammonVariation.Hypergammon2 => 2,
+            BackgammonVariation.Hypergammon3 => 3,
+            _ => 15,
+        };
 
         // Check if opponent has any pieces
         bool oppHasPieces = false;
@@ -707,7 +788,7 @@ public sealed class Evaluator
     /// Post-evaluation sanity check and normalization.
     /// Port of SanityCheck() from eval.c.
     /// </summary>
-    internal static void SanityCheck(Board board, Span<float> output)
+    internal void SanityCheck(Board board, Span<float> output)
     {
         // Clamp all outputs to [0, 1]
         for (int i = 0; i < Constants.NumOutputs; i++)
@@ -762,7 +843,14 @@ public sealed class Evaluator
         if (!fContact)
         {
             for (int i = 0; i < 2; i++)
-                anMaxTurns[i] = anCross[i] * 2;
+            {
+                uint[] b = i == 0 ? board.Opponent : board.Player;
+                if (anBack[i] < 6 && OneSidedBearoff != null)
+                    anMaxTurns[i] = MaxTurns(
+                        PositionId.PositionBearoff(b, OneSidedBearoff.Points, OneSidedBearoff.Chequers));
+                else
+                    anMaxTurns[i] = anCross[i] * 2;
+            }
 
             if (anMaxTurns[1] == 0)
                 anMaxTurns[1] = 1;
@@ -819,6 +907,26 @@ public sealed class Evaluator
             for (int i = Constants.OutputWinGammon; i < Constants.NumOutputs; ++i)
                 if (output[i] < noise) output[i] = 0.0f;
         }
+    }
+
+    /// <summary>
+    /// Upper bound on turns to complete bearoff from a one-sided position.
+    /// Port of MaxTurns() from eval.c.
+    /// </summary>
+    private int MaxTurns(uint posId)
+    {
+        if (OneSidedBearoff == null)
+            return 0;
+
+        Span<float> probs = stackalloc float[32];
+        OneSidedBearoff.GetDistribution(posId, probs);
+
+        for (int i = 31; i >= 0; i--)
+        {
+            if (probs[i] > 0.0f)
+                return i;
+        }
+        return 0;
     }
 
     /// <summary>
@@ -892,7 +1000,7 @@ public sealed class Evaluator
         }
         else
         {
-            EvaluatePositionPlied(board, arOutput, nPlies, ec.UsePrune);
+            EvaluatePositionPlied(board, arOutput, nPlies, ec.UsePrune, ec);
             arOutput[Constants.OutputEquity] = ci.MatchTo > 0
                 ? CubeDecision.UtilityMatch(arOutput, ci,
                     MatchEquity.MatchEquityTable.ComputeDefault())
@@ -984,7 +1092,7 @@ public sealed class Evaluator
         float[] arCf = new float[2 * cci];
         CubeInfo[] aci = new CubeInfo[2 * cci];
 
-        if (pc > PositionClass.Over && nPlies > 0)
+        if (pc > PositionClass.BearoffTwoSided && nPlies > 0)
         {
             // Internal node: recurse over all 21 dice rolls
             float[] ar = new float[Constants.NumOutputs];
@@ -1081,13 +1189,51 @@ public sealed class Evaluator
             // Build cube positions for leaf
             MakeCubePos(aciCubePos, cci, fTop, aci, false);
 
+            // Check for exact cubeful bearoff equities
+            bool usedPerfectCubeful = false;
+            Span<float> arEquity = stackalloc float[4];
+            if (pc == PositionClass.BearoffTwoSided && TwoSidedBearoff is { Cubeful: true })
+            {
+                TwoSidedBearoff.GetCubefulEquities(board, arEquity);
+                usedPerfectCubeful = true;
+            }
+
             // Calculate cubeful equity for each cube position
             for (int ici = 0; ici < 2 * cci; ici++)
             {
                 if (aci[ici].Cube <= 0)
                     continue;
 
-                if (aci[ici].MatchTo == 0)
+                if (aci[ici].MatchTo == 0 && usedPerfectCubeful)
+                {
+                    // Money play with exact cubeful equities from bearoff DB
+                    // arEquity: [0]=cubeless, [1]=owned, [2]=centered, [3]=opponent
+                    if (aci[ici].CubeOwner == -1)
+                        arCf[ici] = arEquity[2]; // centered
+                    else if (aci[ici].CubeOwner == aci[ici].Move)
+                        arCf[ici] = arEquity[1]; // owned
+                    else
+                        arCf[ici] = arEquity[3]; // opponent
+                }
+                else if (aci[ici].MatchTo > 0 && usedPerfectCubeful)
+                {
+                    // Match play bearoff: derive cube efficiency from exact money cubeful
+                    // then use Cl2CfMatch with that derived efficiency
+                    var met = MatchEquity.MatchEquityTable.ComputeDefault();
+                    float rCl = arEquity[0]; // exact cubeless
+                    float rCfMoney = aci[ici].CubeOwner == -1 ? arEquity[2]
+                        : aci[ici].CubeOwner == aci[ici].Move ? arEquity[1]
+                        : arEquity[3];
+                    // Derive cube efficiency: rCubeX = (rCfMoney - rCl) / (rCf_janowski - rCl)
+                    float rCfJanowski = CubeDecision.CubelessToCubefulMoney(
+                        arOutput, aci[ici].CubeOwner, aci[ici].Jacoby, 1.0f);
+                    float denom = rCfJanowski - rCl;
+                    float derivedCubeX = Math.Abs(denom) > 1e-6f
+                        ? Math.Clamp((rCfMoney - rCl) / denom, 0.0f, 1.0f)
+                        : rCubeX;
+                    arCf[ici] = CubeDecision.Cl2CfMatch(arOutput, aci[ici], met, derivedCubeX);
+                }
+                else if (aci[ici].MatchTo == 0)
                 {
                     // Money play
                     arCf[ici] = CubeDecision.CubelessToCubefulMoney(

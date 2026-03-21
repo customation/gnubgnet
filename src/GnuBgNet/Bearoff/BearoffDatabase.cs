@@ -11,6 +11,7 @@ public enum BearoffType
 {
     TwoSided,
     OneSided,
+    Hypergammon,
 }
 
 /// <summary>
@@ -67,33 +68,41 @@ public sealed class BearoffDatabase
         if (data[0] != 'g' || data[1] != 'n' || data[2] != 'u' || data[3] != 'b' || data[4] != 'g')
             throw new InvalidDataException("Invalid bearoff database: missing 'gnubg' magic");
 
-        // Type at offset 6-7
+        // Type at offset 6-7 (or 6 for 'H')
         char t0 = (char)data[6];
         char t1 = (char)data[7];
         BearoffType type;
-        if (t0 == 'O' && t1 == 'S')
-            type = BearoffType.OneSided;
-        else if (t0 == 'T' && t1 == 'S')
-            type = BearoffType.TwoSided;
-        else
-            throw new InvalidDataException($"Unknown bearoff type: {t0}{t1}");
-
-        // Points at offset 9-10
-        int points = ParseAsciiInt(data, 9, 2);
-        // Chequers at offset 12-13
-        int chequers = ParseAsciiInt(data, 12, 2);
-
+        int points, chequers;
         bool cubeful = false, gammon = false, compressed = false, normalDist = false;
 
-        if (type == BearoffType.TwoSided)
+        if (t0 == 'O' && t1 == 'S')
         {
-            cubeful = data[15] == '1';
-        }
-        else
-        {
+            type = BearoffType.OneSided;
+            points = ParseAsciiInt(data, 9, 2);
+            chequers = ParseAsciiInt(data, 12, 2);
             gammon = data[15] == '1';
             compressed = data[17] == '1';
             normalDist = data[19] == '1';
+        }
+        else if (t0 == 'T' && t1 == 'S')
+        {
+            type = BearoffType.TwoSided;
+            points = ParseAsciiInt(data, 9, 2);
+            chequers = ParseAsciiInt(data, 12, 2);
+            cubeful = data[15] == '1';
+        }
+        else if (t0 == 'H')
+        {
+            // Hypergammon: header format "gnubg-H<n>" where n = number of chequers (1, 2, or 3)
+            type = BearoffType.Hypergammon;
+            points = 25;
+            chequers = t1 - '0';
+            if (chequers < 1 || chequers > 3)
+                throw new InvalidDataException($"Invalid hypergammon chequer count: {chequers}");
+        }
+        else
+        {
+            throw new InvalidDataException($"Unknown bearoff type: {t0}{t1}");
         }
 
         return new BearoffDatabase(data, type, points, chequers, cubeful, gammon, compressed, normalDist);
@@ -105,10 +114,18 @@ public sealed class BearoffDatabase
     /// </summary>
     public void Evaluate(Board board, Span<float> output)
     {
-        if (Type == BearoffType.TwoSided)
-            EvaluateTwoSided(board, output);
-        else
-            EvaluateOneSided(board, output);
+        switch (Type)
+        {
+            case BearoffType.TwoSided:
+                EvaluateTwoSided(board, output);
+                break;
+            case BearoffType.OneSided:
+                EvaluateOneSided(board, output);
+                break;
+            case BearoffType.Hypergammon:
+                EvaluateHypergammon(board, output);
+                break;
+        }
     }
 
     /// <summary>
@@ -164,6 +181,69 @@ public sealed class BearoffDatabase
             probs[i] = rawProbs[i] / 65535.0f;
     }
 
+    // ---- Hypergammon evaluation ----
+
+    /// <summary>
+    /// Evaluate a hypergammon position from the bearoff database.
+    /// Port of BearoffEvalHypergammon from bearoff.c.
+    /// </summary>
+    private void EvaluateHypergammon(Board board, Span<float> output)
+    {
+        uint nUs = PositionId.PositionBearoff(board.Player, Points, Chequers);
+        uint nThem = PositionId.PositionBearoff(board.Opponent, Points, Chequers);
+        uint n = PositionId.Combination((uint)(Points + Chequers), (uint)Points);
+        uint iPos = nUs * n + nThem;
+
+        ReadHypergammon(iPos, output, default);
+    }
+
+    /// <summary>
+    /// Evaluate a hypergammon position returning both probabilities and equities.
+    /// Port of BearoffHyper from bearoff.c.
+    /// </summary>
+    public void EvaluateHypergammonFull(Board board, Span<float> output, Span<float> equities)
+    {
+        uint nUs = PositionId.PositionBearoff(board.Player, Points, Chequers);
+        uint nThem = PositionId.PositionBearoff(board.Opponent, Points, Chequers);
+        uint n = PositionId.Combination((uint)(Points + Chequers), (uint)Points);
+        uint iPos = nUs * n + nThem;
+
+        ReadHypergammon(iPos, output, equities);
+    }
+
+    /// <summary>
+    /// Read hypergammon data: 28 bytes per position.
+    /// 5 probability values x 3 bytes + 4 equity values x 3 bytes + 1 padding byte.
+    /// Port of ReadHypergammon from bearoff.c.
+    /// </summary>
+    private void ReadHypergammon(uint iPos, Span<float> output, Span<float> equities)
+    {
+        const int BytesPerPosition = 28;
+        int offset = HeaderSize + (int)(iPos * BytesPerPosition);
+
+        if (output.Length >= Constants.NumOutputs)
+        {
+            for (int i = 0; i < Constants.NumOutputs; i++)
+            {
+                uint us = (uint)(_data[offset + 3 * i]
+                    | (_data[offset + 3 * i + 1] << 8)
+                    | (_data[offset + 3 * i + 2] << 16));
+                output[i] = us / 16777215.0f;
+            }
+        }
+
+        if (equities.Length >= 4)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                uint us = (uint)(_data[offset + 15 + 3 * i]
+                    | (_data[offset + 15 + 3 * i + 1] << 8)
+                    | (_data[offset + 15 + 3 * i + 2] << 16));
+                equities[i] = (us / 16777215.0f - 0.5f) * 6.0f;
+            }
+        }
+    }
+
     // ---- Two-sided evaluation ----
 
     private void EvaluateTwoSided(Board board, Span<float> output)
@@ -215,32 +295,45 @@ public sealed class BearoffDatabase
             pThemStillOn -= probThem[i];
         }
 
-        // Gammon probabilities
+        // Gammon probabilities — only compute when all 15 checkers still on board
         float pWinGammon = 0.0f;
         float pLoseGammon = 0.0f;
 
-        if (Gammon)
+        int anOn0 = 0, anOn1 = 0;
+        for (int i = 0; i < 25; i++)
+        {
+            anOn0 += (int)board.Opponent[i];
+            anOn1 += (int)board.Player[i];
+        }
+
+        if ((anOn0 == 15 || anOn1 == 15) && Gammon)
         {
             Span<float> gammonUs = stackalloc float[32];
             Span<float> gammonThem = stackalloc float[32];
             GetGammonDistribution(nUs, gammonUs);
             GetGammonDistribution(nThem, gammonThem);
 
-            // P(win gammon) = P(we finish) * P(opponent gets gammoned)
-            // Opponent gets gammoned if they haven't borne off ANY checkers
-            float pThemGammonStillOn = 1.0f;
-            for (int i = 1; i < 32; i++)
+            if (anOn0 == 15)
             {
-                pWinGammon += probUs[i] * pThemGammonStillOn;
-                pThemGammonStillOn -= gammonThem[i];
+                // Opponent has all checkers: can win gammon
+                float pThemGammonStillOn = 1.0f;
+                for (int i = 1; i < 32; i++)
+                {
+                    pWinGammon += probUs[i] * pThemGammonStillOn;
+                    pThemGammonStillOn -= gammonThem[i];
+                }
             }
 
-            // P(lose gammon) - symmetric
-            float pUsGammonStillOn = 1.0f;
-            for (int i = 1; i < 32; i++)
+            if (anOn1 == 15)
             {
-                pLoseGammon += probThem[i] * pUsGammonStillOn;
-                pUsGammonStillOn -= gammonUs[i];
+                // Player has all checkers: can lose gammon
+                // Subtract before accumulating for j > i semantics
+                float pUsGammonStillOn = 1.0f;
+                for (int i = 1; i < 32; i++)
+                {
+                    pUsGammonStillOn -= gammonUs[i];
+                    pLoseGammon += probThem[i] * pUsGammonStillOn;
+                }
             }
         }
 

@@ -60,12 +60,20 @@ public sealed class MersenneTwister
         return y;
     }
 
+    // gnubg uses rejection sampling: 2^32 / 6 = 715827882, exp232_l = 715827882 * 6 = 4294967292
+    // Values >= exp232_l are rejected to eliminate modulo bias.
+    private const uint Exp232Q = 715827882U;
+    private const uint Exp232L = 4294967292U; // 715827882 * 6
+
     /// <summary>
     /// Generate a random die value (1-6).
+    /// Uses rejection sampling matching gnubg's RollDice() from dice.c.
     /// </summary>
     public int NextDie()
     {
-        return (int)(NextUInt32() % 6) + 1;
+        uint r;
+        do { r = NextUInt32(); } while (r >= Exp232L);
+        return 1 + (int)(r / Exp232Q);
     }
 
     /// <summary>

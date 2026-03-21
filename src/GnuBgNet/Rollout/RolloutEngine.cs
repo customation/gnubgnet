@@ -18,10 +18,12 @@ namespace GnuBgNet.Rollout;
 public sealed class RolloutEngine
 {
     private readonly Evaluator _evaluator;
+    private readonly MatchEquityTable? _met;
 
-    public RolloutEngine(Evaluator evaluator)
+    public RolloutEngine(Evaluator evaluator, MatchEquityTable? met = null)
     {
         _evaluator = evaluator;
+        _met = met;
     }
 
     /// <summary>
@@ -32,6 +34,9 @@ public sealed class RolloutEngine
         int trials = (int)settings.Trials;
         int truncPlies = settings.Truncate ? settings.TruncatePlies : int.MaxValue;
         int chequerPlies = settings.ChequerPlies;
+
+        // Create quasi-random permutation tables if rotating dice
+        DicePermutations? perms = settings.Rotate ? new DicePermutations(settings.Seed) : null;
 
         // Run trials in parallel with per-thread state
         var locker = new object();
@@ -45,7 +50,7 @@ public sealed class RolloutEngine
             state.Output ??= new float[Constants.NumOutputs];
 
             var trialResult = RunSingleTrial(board, state.Rng, truncPlies, chequerPlies,
-                settings, state.Output, (uint)trial);
+                settings, state.Output, (uint)trial, perms);
 
             for (int i = 0; i < 7; i++)
             {
@@ -133,17 +138,23 @@ public sealed class RolloutEngine
         int truncPlies = settings.Truncate ? settings.TruncatePlies : int.MaxValue;
         int chequerPlies = settings.ChequerPlies;
 
+        // Create quasi-random permutation tables (shared across all alternatives)
+        DicePermutations? perms = settings.Rotate ? new DicePermutations(settings.Seed) : null;
+
         for (int trial = 0; trial < trials; trial++)
         {
-            var rng = new MersenneTwister(settings.Seed == 0 ? (uint)trial : settings.Seed + (uint)trial);
             float[] output = new float[Constants.NumOutputs];
 
             for (int alt = 0; alt < nAlts; alt++)
             {
                 if (stopped[alt]) continue;
 
+                // Dice sharing: each alternative gets the SAME seed for the same trial,
+                // so they share the same dice sequence. This is critical for variance
+                // reduction — comparing moves under identical dice conditions.
+                var rng = new MersenneTwister(settings.Seed == 0 ? (uint)trial : settings.Seed + (uint)trial);
                 var trialResult = RunSingleTrial(candidateBoards[alt], rng, truncPlies,
-                    chequerPlies, settings, output, (uint)trial);
+                    chequerPlies, settings, output, (uint)trial, perms);
 
                 for (int j = 0; j < 7; j++)
                 {
@@ -189,20 +200,32 @@ public sealed class RolloutEngine
     /// Run a single rollout trial: alternating moves until game over or truncation.
     /// Returns 7 values: 5 probabilities + cubeless equity + cubeful equity.
     /// Port of BasicCubefulRollout from rollout.c.
+    /// When settings.Cubeful is true, cube decisions (double/take/pass) are made
+    /// at each turn using GeneralCubeDecisionE + FindCubeDecision.
     /// </summary>
     private double[] RunSingleTrial(Board startBoard, MersenneTwister rng,
-        int truncPlies, int chequerPlies, RolloutSettings settings, float[] output, uint trialIndex)
+        int truncPlies, int chequerPlies, RolloutSettings settings, float[] output,
+        uint trialIndex, DicePermutations? perms = null)
     {
         var board = startBoard.Clone();
         int ply = 0;
         bool playerOnRoll = true;
         double[] varRedn = settings.VarianceReduction ? new double[7] : null!;
+        int skip = 0; // quasi-random skip counter
+
+        // Cube state for cubeful rollout
+        int cubeValue = 1;
+        int cubeOwner = -1; // -1 = centered
+        int nBasisCube = 1;
 
         while (ply < truncPlies)
         {
             // Check for game over
             if (IsGameOver(board, playerOnRoll, out var gameOverResult))
             {
+                // Scale cubeful equity by cube multiplier
+                if (settings.Cubeful)
+                    gameOverResult[6] *= (double)cubeValue / nBasisCube;
                 if (settings.VarianceReduction)
                     ApplyVarianceReduction(gameOverResult, varRedn);
                 return gameOverResult;
@@ -211,20 +234,49 @@ public sealed class RolloutEngine
             // Bearoff truncation
             if (TryBearoffTruncation(board, playerOnRoll, settings, output, out var bearoffResult))
             {
+                if (settings.Cubeful)
+                    bearoffResult[6] *= (double)cubeValue / nBasisCube;
                 if (settings.VarianceReduction)
                     ApplyVarianceReduction(bearoffResult, varRedn);
                 return bearoffResult;
             }
 
-            // Roll dice (quasi-random rotation for first roll if enabled)
-            int d0, d1;
-            if (settings.Rotate && ply == 0)
+            // Cubeful play-out: evaluate cube decision before rolling dice
+            if (settings.Cubeful && ply > 0)
             {
-                // Quasi-random: cycle through all 36 outcomes
-                int diceIdx = (int)(trialIndex % 36);
-                d0 = diceIdx / 6 + 1;
-                d1 = diceIdx % 6 + 1;
-                if (d0 < d1) (d0, d1) = (d1, d0);
+                bool canDouble = cubeOwner == -1 || (playerOnRoll && cubeOwner == 0) || (!playerOnRoll && cubeOwner == 1);
+                if (canDouble)
+                {
+                    var cubeResult = EvaluateCubeDecision(board, playerOnRoll, settings, output,
+                        cubeValue, cubeOwner, nBasisCube);
+
+                    if (cubeResult.HasValue)
+                    {
+                        var (action, result) = cubeResult.Value;
+                        if (action == CubeTrialAction.DoublePass)
+                        {
+                            // Game over: opponent dropped
+                            if (settings.VarianceReduction)
+                                ApplyVarianceReduction(result, varRedn);
+                            return result;
+                        }
+                        else if (action == CubeTrialAction.DoubleTake)
+                        {
+                            // Cube accepted: double value, ownership flips
+                            cubeValue *= 2;
+                            cubeOwner = playerOnRoll ? 1 : 0; // opponent now owns
+                        }
+                        // NoDouble: continue normally
+                    }
+                }
+            }
+
+            // Roll dice using quasi-random permutation tables or RNG
+            int d0, d1;
+            if (settings.Rotate && perms != null)
+            {
+                // Quasi-random: use permutation tables. Skip doubles for first roll.
+                (d0, d1) = perms.GetRoll((int)trialIndex, ply, ref skip, skipDoubles: ply == 0);
             }
             else
             {
@@ -275,12 +327,19 @@ public sealed class RolloutEngine
 
         // Truncated: evaluate at current position
         var evalBoard = playerOnRoll ? board : board.Swapped();
-        _evaluator.EvaluatePosition(evalBoard, output);
+
+        if (settings.Cubeful && settings.CubePlies > 0)
+            _evaluator.EvaluatePositionPlied(evalBoard, output, settings.CubePlies - 1);
+        else
+            _evaluator.EvaluatePosition(evalBoard, output);
+
         if (!playerOnRoll)
             Evaluator.InvertEvaluation(output);
 
         float equity = MatchEquityTable.MoneyEquity(output);
-        double[] result =
+        double cubefulEq = settings.Cubeful ? equity * (double)cubeValue / nBasisCube : equity;
+
+        double[] truncResult =
         [
             output[Constants.OutputWin],
             output[Constants.OutputWinGammon],
@@ -288,13 +347,96 @@ public sealed class RolloutEngine
             output[Constants.OutputLoseGammon],
             output[Constants.OutputLoseBackgammon],
             equity,
-            equity,
+            cubefulEq,
         ];
 
         if (settings.VarianceReduction)
-            ApplyVarianceReduction(result, varRedn);
+            ApplyVarianceReduction(truncResult, varRedn);
 
-        return result;
+        return truncResult;
+    }
+
+    /// <summary>
+    /// Evaluate cube decision during rollout play-out.
+    /// Port of the cube decision block from BasicCubefulRollout lines 471-556.
+    /// Returns null if no cube action should be taken (dead cube etc).
+    /// </summary>
+    private (CubeTrialAction action, double[] result)? EvaluateCubeDecision(
+        Board board, bool playerOnRoll, RolloutSettings settings, float[] output,
+        int cubeValue, int cubeOwner, int nBasisCube)
+    {
+        var evalBoard = playerOnRoll ? board : board.Swapped();
+
+        // Evaluate position at cube ply depth
+        if (settings.CubePlies > 0)
+            _evaluator.EvaluatePositionPlied(evalBoard, output, settings.CubePlies - 1);
+        else
+            _evaluator.EvaluatePosition(evalBoard, output);
+
+        if (!playerOnRoll)
+            Evaluator.InvertEvaluation(output);
+
+        // Build CubeInfo for current state
+        var ci = new CubeInfo
+        {
+            Cube = cubeValue,
+            CubeOwner = cubeOwner,
+            Move = 0, // current player is always 0 from their perspective
+            MatchTo = 0, // money game rollout
+            Jacoby = false,
+            Beavers = false,
+        };
+
+        // Check if doubling is possible
+        if (!CubeDecision.GetDPEq(ci, _met, out float dpEquity))
+            return null;
+
+        // Get no-double and double-take equities
+        var cubeResult = CubeDecision.AnalyseMoney(output, ci);
+
+        // Determine action
+        switch (cubeResult.Action)
+        {
+            case CubeAction.DoubleTake:
+            case CubeAction.DoubleBeaver:
+            case CubeAction.RedoubleTake:
+            case CubeAction.OptionalDoubleTake:
+            case CubeAction.OptionalRedoubleTake:
+            case CubeAction.OptionalDoubleBeaver:
+                return (CubeTrialAction.DoubleTake, null!);
+
+            case CubeAction.DoublePass:
+            case CubeAction.RedoublePass:
+            case CubeAction.OptionalDoublePass:
+            case CubeAction.OptionalRedoublePass:
+            {
+                // Game over: opponent drops. Assign double/pass equity.
+                float eq = dpEquity;
+                double cubefulEq = eq * (double)cubeValue / nBasisCube;
+                double[] result =
+                [
+                    output[Constants.OutputWin],
+                    output[Constants.OutputWinGammon],
+                    output[Constants.OutputWinBackgammon],
+                    output[Constants.OutputLoseGammon],
+                    output[Constants.OutputLoseBackgammon],
+                    eq,
+                    cubefulEq,
+                ];
+                return (CubeTrialAction.DoublePass, result);
+            }
+
+            default:
+                // No double: continue
+                return (CubeTrialAction.NoDouble, null!);
+        }
+    }
+
+    private enum CubeTrialAction
+    {
+        NoDouble,
+        DoubleTake,
+        DoublePass,
     }
 
     /// <summary>

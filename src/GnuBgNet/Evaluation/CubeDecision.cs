@@ -1016,7 +1016,7 @@ public static class CubeDecision
     /// Port of Cl2CfMoney() from eval.c using Janowski's formula.
     /// </summary>
     internal static float CubelessToCubefulMoney(
-        ReadOnlySpan<float> output, int cubeOwner, bool jacoby, float cubeEfficiency)
+        ReadOnlySpan<float> output, int cubeOwner, bool jacoby, float cubeEfficiency, int move = 0)
     {
         const float epsilon = 0.0000001f;
         const float omepsilon = 0.9999999f;
@@ -1036,7 +1036,7 @@ public static class CubeDecision
             return MatchEquityTable.MoneyEquity(output);
 
         float eqDead = MatchEquityTable.MoneyEquity(output);
-        float eqLive = MoneyLive(rW, rL, winProb, cubeOwner, jacoby);
+        float eqLive = MoneyLive(rW, rL, winProb, cubeOwner, move, jacoby);
 
         return eqDead * (1.0f - cubeEfficiency) + eqLive * cubeEfficiency;
     }
@@ -1044,8 +1044,11 @@ public static class CubeDecision
     /// <summary>
     /// Live cube equity for money game using Janowski's model.
     /// Port of MoneyLive() from eval.c.
+    /// cubeOwner: -1=centered, 0=player0, 1=player1.
+    /// move: index of the player on roll (whose perspective the output is from).
+    /// In C: pci->fCubeOwner == pci->fMove means "I own the cube".
     /// </summary>
-    private static float MoneyLive(float rW, float rL, float p, int cubeOwner, bool jacoby)
+    private static float MoneyLive(float rW, float rL, float p, int cubeOwner, int move, bool jacoby)
     {
         if (cubeOwner == -1)
         {
@@ -1060,7 +1063,7 @@ public static class CubeDecision
             else
                 return jacoby ? 1.0f : (1.0f + (rW - 1.0f) * (p - rCP) / (1.0f - rCP));
         }
-        else if (cubeOwner == 0)
+        else if (cubeOwner == move)
         {
             // Player owns cube
             float rCP = (rL + 1.0f) / (rW + rL + 0.5f);

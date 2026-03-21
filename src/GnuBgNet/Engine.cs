@@ -22,21 +22,30 @@ public sealed class Engine : IDisposable
     private readonly NetworkSet _nets;
     private readonly BearoffDatabase? _oneSidedBearoff;
     private readonly BearoffDatabase? _twoSidedBearoff;
+    private readonly BearoffDatabase? _hyper1;
+    private readonly BearoffDatabase? _hyper2;
+    private readonly BearoffDatabase? _hyper3;
     private readonly Evaluator _evaluator;
     private readonly MatchEquityTable _met;
 
-    private Engine(NetworkSet nets, BearoffDatabase? osBearoff, BearoffDatabase? tsBearoff, MatchEquityTable met)
+    private Engine(NetworkSet nets, BearoffDatabase? osBearoff, BearoffDatabase? tsBearoff,
+        BearoffDatabase? hyper1, BearoffDatabase? hyper2, BearoffDatabase? hyper3,
+        MatchEquityTable met)
     {
         _nets = nets;
         _oneSidedBearoff = osBearoff;
         _twoSidedBearoff = tsBearoff;
-        _evaluator = new Evaluator(nets, osBearoff, tsBearoff);
+        _hyper1 = hyper1;
+        _hyper2 = hyper2;
+        _hyper3 = hyper3;
+        _evaluator = new Evaluator(nets, osBearoff, tsBearoff, hyper1, hyper2, hyper3);
         _met = met;
     }
 
     /// <summary>
     /// Create an engine instance by loading data files from the specified directory.
-    /// Expects: gnubg.wd (required), gnubg_os0.bd (optional), gnubg_ts0.bd (optional).
+    /// Expects: gnubg.wd (required), gnubg_os0.bd (optional), gnubg_ts0.bd (optional),
+    /// hyper1.bd/hyper2.bd/hyper3.bd (optional hypergammon databases).
     /// </summary>
     public static Engine Create(string dataDir)
     {
@@ -45,17 +54,10 @@ public sealed class Engine : IDisposable
             throw new FileNotFoundException($"Weights file not found: {weightsPath}");
 
         var nets = NetworkSet.LoadBinary(weightsPath);
-
-        BearoffDatabase? os = null, ts = null;
-        var osPath = Path.Combine(dataDir, "gnubg_os0.bd");
-        if (File.Exists(osPath)) os = BearoffDatabase.Load(osPath);
-
-        var tsPath = Path.Combine(dataDir, "gnubg_ts0.bd");
-        if (File.Exists(tsPath)) ts = BearoffDatabase.Load(tsPath);
-
+        var (os, ts, h1, h2, h3) = LoadBearoffDatabases(dataDir);
         var met = MatchEquityTable.ComputeDefault();
 
-        return new Engine(nets, os, ts, met);
+        return new Engine(nets, os, ts, h1, h2, h3, met);
     }
 
     /// <summary>
@@ -68,17 +70,34 @@ public sealed class Engine : IDisposable
             throw new FileNotFoundException($"Weights file not found: {weightsPath}");
 
         var nets = NetworkSet.LoadBinary(weightsPath);
+        var (os, ts, h1, h2, h3) = LoadBearoffDatabases(dataDir);
+        var met = MetXmlLoader.LoadFromFile(metXmlPath);
 
-        BearoffDatabase? os = null, ts = null;
+        return new Engine(nets, os, ts, h1, h2, h3, met);
+    }
+
+    private static (BearoffDatabase? os, BearoffDatabase? ts,
+        BearoffDatabase? h1, BearoffDatabase? h2, BearoffDatabase? h3)
+        LoadBearoffDatabases(string dataDir)
+    {
+        BearoffDatabase? os = null, ts = null, h1 = null, h2 = null, h3 = null;
+
         var osPath = Path.Combine(dataDir, "gnubg_os0.bd");
         if (File.Exists(osPath)) os = BearoffDatabase.Load(osPath);
 
         var tsPath = Path.Combine(dataDir, "gnubg_ts0.bd");
         if (File.Exists(tsPath)) ts = BearoffDatabase.Load(tsPath);
 
-        var met = MetXmlLoader.LoadFromFile(metXmlPath);
+        var h1Path = Path.Combine(dataDir, "hyper1.bd");
+        if (File.Exists(h1Path)) h1 = BearoffDatabase.Load(h1Path);
 
-        return new Engine(nets, os, ts, met);
+        var h2Path = Path.Combine(dataDir, "hyper2.bd");
+        if (File.Exists(h2Path)) h2 = BearoffDatabase.Load(h2Path);
+
+        var h3Path = Path.Combine(dataDir, "hyper3.bd");
+        if (File.Exists(h3Path)) h3 = BearoffDatabase.Load(h3Path);
+
+        return (os, ts, h1, h2, h3);
     }
 
     /// <summary>
@@ -427,7 +446,7 @@ public sealed class Engine : IDisposable
     public RolloutResult RolloutPosition(Board board, RolloutSettings? settings = null)
     {
         settings ??= RolloutSettings.Default;
-        var engine = new RolloutEngine(_evaluator);
+        var engine = new RolloutEngine(_evaluator, _met);
         return engine.Rollout(board, settings);
     }
 
@@ -440,7 +459,7 @@ public sealed class Engine : IDisposable
         RolloutSettings? settings = null)
     {
         settings ??= RolloutSettings.Default;
-        var engine = new RolloutEngine(_evaluator);
+        var engine = new RolloutEngine(_evaluator, _met);
         return engine.RolloutMoves(board, die1, die2, settings, out _);
     }
 
@@ -603,6 +622,300 @@ public sealed class Engine : IDisposable
         if (equityLoss < 0.08) return MoveClassification.Doubtful;
         if (equityLoss < 0.16) return MoveClassification.Bad;
         return MoveClassification.Blunder;
+    }
+
+    /// <summary>
+    /// Analyse a Jellyfish .mat file.
+    /// Port of gnubgapi_analyse_mat() from gnubgapi.c lines 1244-1277.
+    /// Parses the file, then analyses all games found within.
+    /// </summary>
+    public MatAnalysisResult AnalyseMat(string matPath, int plies = 0)
+    {
+        var turns = MatParser.ParseFile(matPath);
+        if (turns.Count == 0)
+            throw new ArgumentException("No turns found in .mat file");
+
+        return AnalyseGameFromBoard(turns, plies);
+    }
+
+    /// <summary>
+    /// Analyse a game from parsed turns, tracking board state from the opening position.
+    /// Port of gnubgapi_analyse_game() from gnubgapi.c lines 885-1017.
+    /// Unlike AnalyseGame (which takes position IDs), this tracks the board internally
+    /// and uses the C-style skill classification system.
+    /// </summary>
+    public MatAnalysisResult AnalyseGameFromBoard(IReadOnlyList<GameTurn> turns, int plies = 0)
+    {
+        var board = Board.Opening();
+        var ci = CubeInfo.Money();
+
+        var analyses = new List<TurnAnalysis>();
+        int[] totalMoves = new int[2];
+        int[] unforcedMoves = new int[2];
+        int[,] skillCounts = new int[2, 4]; // [player, skill]
+        float[] totalError = new float[2];
+
+        foreach (var turn in turns)
+        {
+            if (turn.IsCubeAction) continue;
+            if (turn.Die1 < 1 || turn.Die1 > 6 || turn.Die2 < 1 || turn.Die2 > 6)
+                continue;
+
+            int player = turn.Player;
+
+            // Generate all legal moves
+            var ml = MoveGenerator.GenerateMoves(board, turn.Die1, turn.Die2);
+
+            if (ml.Moves.Count == 0)
+            {
+                // No legal moves — forced pass, swap sides
+                board = board.Swapped();
+                continue;
+            }
+
+            totalMoves[player]++;
+
+            if (ml.Moves.Count == 1)
+            {
+                // Forced move — no decision to analyse
+                skillCounts[player, (int)SkillLevel.None]++;
+                var newBoard = MoveGenerator.ApplyMoveRaw(board, turn.PlayedMove);
+                board = newBoard.Swapped();
+                continue;
+            }
+
+            // Multiple legal moves — decision point
+            unforcedMoves[player]++;
+
+            // Evaluate all candidates
+            var rankedMoves = plies > 0
+                ? GenerateMovesWithEvalPlied(board, turn.Die1, turn.Die2, plies)
+                : GenerateMovesWithEval(board, turn.Die1, turn.Die2);
+
+            if (rankedMoves.Count == 0)
+            {
+                // Fallback: apply move and continue
+                var nb = MoveGenerator.ApplyMoveRaw(board, turn.PlayedMove);
+                board = nb.Swapped();
+                continue;
+            }
+
+            // Find played move by comparing result position IDs
+            var afterBoard = MoveGenerator.ApplyMoveRaw(board, turn.PlayedMove);
+            string? afterPosId = PositionId.Encode(afterBoard);
+
+            int playedIdx = -1;
+            if (afterPosId != null)
+            {
+                for (int i = 0; i < rankedMoves.Count; i++)
+                {
+                    if (rankedMoves[i].ResultPositionId == afterPosId)
+                    {
+                        playedIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            // Compute skill (played score - best score)
+            float rSkill = 0.0f;
+            if (playedIdx >= 0 && rankedMoves.Count > 0)
+                rSkill = (float)(rankedMoves[playedIdx].Equity - rankedMoves[0].Equity);
+
+            var skill = ClassifySkill(rSkill);
+            skillCounts[player, (int)skill]++;
+
+            if (rSkill < 0.0f)
+                totalError[player] -= rSkill;
+
+            string posId = PositionId.Encode(board) ?? "";
+
+            var classification = ClassifyMove(-rSkill); // ClassifyMove expects positive loss
+
+            analyses.Add(new TurnAnalysis
+            {
+                PositionId = posId,
+                EquityBefore = rankedMoves[0].Equity,
+                EquityAfterBestMove = rankedMoves[0].Equity,
+                EquityAfterPlayedMove = playedIdx >= 0 ? rankedMoves[playedIdx].Equity : rankedMoves[0].Equity,
+                EquityLoss = rSkill < 0 ? -rSkill : 0,
+                RankedMoves = rankedMoves,
+                PlayedMoveRank = playedIdx >= 0 ? playedIdx : 0,
+                Classification = classification,
+            });
+
+            // Apply the played move and swap sides
+            board = afterBoard.Swapped();
+        }
+
+        // Compute derived statistics
+        float[] errorPerMove = new float[2];
+        float[] mpr = new float[2];
+        string[] rating = new string[2];
+
+        for (int p = 0; p < 2; p++)
+        {
+            if (unforcedMoves[p] > 0)
+                errorPerMove[p] = totalError[p] / unforcedMoves[p];
+            mpr[p] = errorPerMove[p] * 1000.0f;
+            rating[p] = GetRating(errorPerMove[p]);
+        }
+
+        return new MatAnalysisResult
+        {
+            Turns = analyses,
+            TotalMoves = [totalMoves[0], totalMoves[1]],
+            UnforcedMoves = [unforcedMoves[0], unforcedMoves[1]],
+            SkillCounts = new int[,]
+            {
+                { skillCounts[0, 0], skillCounts[0, 1], skillCounts[0, 2], skillCounts[0, 3] },
+                { skillCounts[1, 0], skillCounts[1, 1], skillCounts[1, 2], skillCounts[1, 3] },
+            },
+            TotalError = [totalError[0], totalError[1]],
+            ErrorPerMove = [errorPerMove[0], errorPerMove[1]],
+            MillipointsPerMove = [mpr[0], mpr[1]],
+            Rating = [rating[0], rating[1]],
+        };
+    }
+
+    /// <summary>
+    /// Skill classification matching GnuBG's arSkillLevel thresholds.
+    /// Port of skill_classify() from gnubgapi.c.
+    /// </summary>
+    private static SkillLevel ClassifySkill(float rSkill)
+    {
+        if (rSkill < -0.12f) return SkillLevel.VeryBad;
+        if (rSkill < -0.06f) return SkillLevel.Bad;
+        if (rSkill < -0.03f) return SkillLevel.Doubtful;
+        return SkillLevel.None;
+    }
+
+    /// <summary>
+    /// Rating string from error per move.
+    /// Port of get_rating() from gnubgapi.c.
+    /// </summary>
+    private static string GetRating(float errorPerMove)
+    {
+        if (errorPerMove < 0.005f) return "Super Grandmaster";
+        if (errorPerMove < 0.008f) return "Grandmaster";
+        if (errorPerMove < 0.013f) return "Master";
+        if (errorPerMove < 0.020f) return "Advanced";
+        if (errorPerMove < 0.032f) return "Intermediate";
+        return "Beginner";
+    }
+
+    // ---- Resignation Analysis ----
+
+    /// <summary>
+    /// Determine whether a player should resign and at what level.
+    /// Port of getResignation() from rollout.c.
+    /// Returns 0 (no resign), 1 (normal), 2 (gammon), or 3 (backgammon).
+    /// </summary>
+    public int GetResignation(Board board, CubeInfo? cubeInfo = null)
+    {
+        cubeInfo ??= CubeInfo.Money();
+        float[] output = new float[Constants.NumOutputs];
+        _evaluator.EvaluatePosition(board, output);
+        return Resignation.GetResignation(output, cubeInfo, _met);
+    }
+
+    /// <summary>
+    /// Determine whether a player should resign from a position ID.
+    /// </summary>
+    public int GetResignation(string positionId, CubeInfo? cubeInfo = null)
+    {
+        var board = PositionId.Decode(positionId)
+            ?? throw new ArgumentException($"Invalid position ID: {positionId}");
+        return GetResignation(board, cubeInfo);
+    }
+
+    /// <summary>
+    /// Calculate equity before and after resignation at a specific level.
+    /// Port of getResignEquities() from rollout.c.
+    /// </summary>
+    public ResignationResult GetResignEquities(Board board, int resignLevel, CubeInfo? cubeInfo = null)
+    {
+        cubeInfo ??= CubeInfo.Money();
+        float[] output = new float[Constants.NumOutputs];
+        _evaluator.EvaluatePosition(board, output);
+        Resignation.GetResignEquities(output, cubeInfo, resignLevel,
+            out float eqBefore, out float eqAfter, _met);
+        return new ResignationResult(resignLevel, eqBefore, eqAfter);
+    }
+
+    /// <summary>
+    /// Check whether an opponent's resignation should be accepted.
+    /// Returns the acceptable level (1-3) or 0 to reject.
+    /// </summary>
+    public int CheckResignation(Board board, int resignLevel, CubeInfo? cubeInfo = null, float maxCost = 0.05f)
+    {
+        cubeInfo ??= CubeInfo.Money();
+        float[] output = new float[Constants.NumOutputs];
+        _evaluator.EvaluatePosition(board, output);
+        return Resignation.CheckResignation(output, cubeInfo, resignLevel, _met, maxCost);
+    }
+
+    // ---- Board Display ----
+
+    /// <summary>
+    /// Draw the board in ASCII art.
+    /// Port of DrawBoard() from drawboard.c.
+    /// </summary>
+    public string DrawBoard(Board board, bool playerOnRoll = true, string[]? annotations = null,
+        string? matchId = null, int nChequers = 15, bool clockwise = false)
+        => BoardDisplay.DrawBoard(board, playerOnRoll, annotations, matchId, nChequers, clockwise);
+
+    /// <summary>
+    /// Generate FIBS "boardstyle 3" protocol representation.
+    /// Port of FIBSBoard() from drawboard.c.
+    /// </summary>
+    public static string FIBSBoard(Board board, bool playerOnRoll, string playerName, string opponentName,
+        int matchLength, int playerScore, int opponentScore, int die0, int die1,
+        int cubeValue = 1, int cubeOwner = -1, bool crawford = false)
+        => BoardDisplay.FIBSBoard(board, playerOnRoll, playerName, opponentName,
+            matchLength, playerScore, opponentScore, die0, die1, cubeValue, cubeOwner, crawford);
+
+    // ---- Feature Extraction ----
+
+    /// <summary>
+    /// Extract neural network input features from a board position.
+    /// Returns 248 floats matching gnubgapi_position_to_features().
+    /// Port of gnubgapi_position_to_features() from gnubgapi.c.
+    /// </summary>
+    public static float[] ExtractFeatures(Board board, bool isTopOnRoll = false)
+    {
+        float[] features = new float[NeuralNet.FeatureExtractor.FeatureDim];
+        NeuralNet.FeatureExtractor.ExtractFeatures(board, isTopOnRoll, features);
+        return features;
+    }
+
+    /// <summary>
+    /// Extract neural network input features from a position ID.
+    /// </summary>
+    public static float[] ExtractFeatures(string positionId, bool isTopOnRoll = false)
+    {
+        var board = PositionId.Decode(positionId)
+            ?? throw new ArgumentException($"Invalid position ID: {positionId}");
+        return ExtractFeatures(board, isTopOnRoll);
+    }
+
+    /// <summary>
+    /// Extract raw neural network inputs for a specific position class.
+    /// Returns the full input array that would be fed to the neural net.
+    /// </summary>
+    public float[] ExtractRawInputs(Board board)
+    {
+        var pc = Classifier.Classify(board, _evaluator);
+        int size = pc switch
+        {
+            PositionClass.Race => Constants.NumRaceInputs,
+            PositionClass.Contact => Constants.NumContactInputs,
+            PositionClass.Crashed => Constants.NumCrashedInputs,
+            _ => Constants.NumContactInputs,
+        };
+        float[] inputs = new float[size];
+        NeuralNet.FeatureExtractor.ExtractRawInputs(board, pc, inputs);
+        return inputs;
     }
 
     public void Dispose()

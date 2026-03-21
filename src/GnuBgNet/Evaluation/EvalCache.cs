@@ -103,6 +103,8 @@ public sealed class EvalCache
         output[2] = entry.Ar2;
         output[3] = entry.Ar3;
         output[4] = entry.Ar4;
+        if (output.Length > 5)
+            output[5] = entry.Ar5;
     }
 
     /// <summary>

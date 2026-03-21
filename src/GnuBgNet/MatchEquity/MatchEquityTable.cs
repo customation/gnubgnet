@@ -79,9 +79,21 @@ public sealed class MatchEquityTable
         }
     }
 
+    /// <summary>
+    /// Full Zadeh MET computation with cube-level iteration.
+    /// Port of initMETZadeh() from matchequity.c.
+    /// </summary>
     private static void InitMETZadeh(float[,] met, float[,] postCrawford,
         float rG1, float rG2, float rDelta, float rDeltaBar)
     {
+        const int MAXCUBELEVEL = 7;
+
+        // D1bar/D2bar = dead-cube drop points, D1/D2 = semi-efficient recube drop points
+        float[,,] D1 = new float[MaxScore, MaxScore, MAXCUBELEVEL];
+        float[,,] D2 = new float[MaxScore, MaxScore, MAXCUBELEVEL];
+        float[,,] D1bar = new float[MaxScore, MaxScore, MAXCUBELEVEL];
+        float[,,] D2bar = new float[MaxScore, MaxScore, MAXCUBELEVEL];
+
         // 1-away, n-away
         for (int i = 0; i < MaxScore; i++)
         {
@@ -90,32 +102,131 @@ public sealed class MatchEquityTable
             met[0, i] = 1.0f - met[i, 0];
         }
 
-        // General case using simplified Zadeh recursion
-        for (int i = 1; i < MaxScore; i++)
+        for (int i = 0; i < MaxScore; i++)
         {
-            for (int j = 1; j < MaxScore; j++)
+            for (int j = 0; j <= i; j++)
             {
-                // Simplified Zadeh: use recursion with gammon probabilities
-                // met[i][j] ≈ (1-G1) * (met[i-1][j] + met[i][j-1]) / 2
-                //            + G1 * (met[i-2][j] + met[i][j-2]) / 2
-                // with cube efficiency adjustments
+                for (int nCube = MAXCUBELEVEL - 1; nCube >= 0; nCube--)
+                {
+                    int nCubeValue = 1 << nCube;
 
-                float noGammon = 0.5f * (GetSafe(met, i - 1, j) + (1.0f - GetSafe(met, j - 1, i)));
-                float gammon = 0.5f * (GetSafe(met, i - 2, j) + (1.0f - GetSafe(met, j - 2, i)));
+                    // D1bar[i][j]
+                    int cpv = GetCubePrimeValue(i, j, nCubeValue);
+                    float num = GetMET(i - nCubeValue, j, met)
+                        - rG2 * GetMET(i, j - 4 * cpv, met)
+                        - (1.0f - rG2) * GetMET(i, j - 2 * cpv, met);
+                    float den = rG1 * GetMET(i - 4 * cpv, j, met)
+                        + (1.0f - rG1) * GetMET(i - 2 * cpv, j, met)
+                        - rG2 * GetMET(i, j - 4 * cpv, met)
+                        - (1.0f - rG2) * GetMET(i, j - 2 * cpv, met);
+                    D1bar[i, j, nCube] = Math.Abs(den) > 1e-12f ? num / den : 0.5f;
 
-                // Cube efficiency blend
-                float cubeless = (1.0f - rG1) * noGammon + rG1 * gammon;
+                    if (i != j)
+                    {
+                        cpv = GetCubePrimeValue(j, i, nCubeValue);
+                        num = GetMET(j - nCubeValue, i, met)
+                            - rG2 * GetMET(j, i - 4 * cpv, met)
+                            - (1.0f - rG2) * GetMET(j, i - 2 * cpv, met);
+                        den = rG1 * GetMET(j - 4 * cpv, i, met)
+                            + (1.0f - rG1) * GetMET(j - 2 * cpv, i, met)
+                            - rG2 * GetMET(j, i - 4 * cpv, met)
+                            - (1.0f - rG2) * GetMET(j, i - 2 * cpv, met);
+                        D1bar[j, i, nCube] = Math.Abs(den) > 1e-12f ? num / den : 0.5f;
+                    }
 
-                // Apply cube efficiency adjustments
-                float doublePoint = cubeless + rDelta * (0.5f - Math.Abs(cubeless - 0.5f));
-                met[i, j] = doublePoint * (1.0f - rDeltaBar) + cubeless * rDeltaBar;
+                    // D2bar[i][j]
+                    cpv = GetCubePrimeValue(j, i, nCubeValue);
+                    num = GetMET(j - nCubeValue, i, met)
+                        - rG2 * GetMET(j, i - 4 * cpv, met)
+                        - (1.0f - rG2) * GetMET(j, i - 2 * cpv, met);
+                    den = rG1 * GetMET(j - 4 * cpv, i, met)
+                        + (1.0f - rG1) * GetMET(j - 2 * cpv, i, met)
+                        - rG2 * GetMET(j, i - 4 * cpv, met)
+                        - (1.0f - rG2) * GetMET(j, i - 2 * cpv, met);
+                    D2bar[i, j, nCube] = Math.Abs(den) > 1e-12f ? num / den : 0.5f;
 
-                met[i, j] = Math.Clamp(met[i, j], 0.0f, 1.0f);
+                    if (i != j)
+                    {
+                        cpv = GetCubePrimeValue(i, j, nCubeValue);
+                        num = GetMET(i - nCubeValue, j, met)
+                            - rG2 * GetMET(i, j - 4 * cpv, met)
+                            - (1.0f - rG2) * GetMET(i, j - 2 * cpv, met);
+                        den = rG1 * GetMET(i - 4 * cpv, j, met)
+                            + (1.0f - rG1) * GetMET(i - 2 * cpv, j, met)
+                            - rG2 * GetMET(i, j - 4 * cpv, met)
+                            - (1.0f - rG2) * GetMET(i, j - 2 * cpv, met);
+                        D2bar[j, i, nCube] = Math.Abs(den) > 1e-12f ? num / den : 0.5f;
+                    }
+
+                    // D1
+                    if (i < 2 * nCubeValue || j < 2 * nCubeValue)
+                    {
+                        D1[i, j, nCube] = D1bar[i, j, nCube];
+                        if (i != j) D1[j, i, nCube] = D1bar[j, i, nCube];
+                    }
+                    else
+                    {
+                        D1[i, j, nCube] = 1.0f + (D2[i, j, nCube + 1] + rDelta)
+                            * (D1bar[i, j, nCube] - 1.0f);
+                        if (i != j)
+                            D1[j, i, nCube] = 1.0f + (D2[j, i, nCube + 1] + rDelta)
+                                * (D1bar[j, i, nCube] - 1.0f);
+                    }
+
+                    // D2
+                    if (i < 2 * nCubeValue || j < 2 * nCubeValue)
+                    {
+                        D2[i, j, nCube] = D2bar[i, j, nCube];
+                        if (i != j) D2[j, i, nCube] = D2bar[j, i, nCube];
+                    }
+                    else
+                    {
+                        D2[i, j, nCube] = 1.0f + (D1[i, j, nCube + 1] + rDelta)
+                            * (D2bar[i, j, nCube] - 1.0f);
+                        if (i != j)
+                            D2[j, i, nCube] = 1.0f + (D1[j, i, nCube + 1] + rDelta)
+                                * (D2bar[j, i, nCube] - 1.0f);
+                    }
+
+                    // Final MET entry at cube level 0
+                    if (nCube == 0 && i > 0 && j > 0)
+                    {
+                        float d1 = D1[i, j, 0];
+                        float d2 = D2[i, j, 0];
+                        float denomMet = d1 + rDeltaBar + d2 + rDeltaBar - 1.0f;
+                        if (Math.Abs(denomMet) > 1e-12f)
+                        {
+                            met[i, j] = ((d2 + rDeltaBar - 0.5f) * GetMET(i - 1, j, met)
+                                + (d1 + rDeltaBar - 0.5f) * GetMET(i, j - 1, met))
+                                / denomMet;
+                        }
+                        else
+                        {
+                            met[i, j] = 0.5f;
+                        }
+
+                        if (i != j)
+                            met[j, i] = 1.0f - met[i, j];
+                    }
+                }
             }
         }
     }
 
-    private static float GetSafe(float[,] met, int i, int j)
+    /// <summary>
+    /// Port of GetCubePrimeValue() from matchequity.c.
+    /// </summary>
+    private static int GetCubePrimeValue(int i, int j, int nCubeValue)
+    {
+        if (i < 2 * nCubeValue && j >= 2 * nCubeValue)
+            return 2 * nCubeValue;
+        return nCubeValue;
+    }
+
+    /// <summary>
+    /// Port of GET_MET macro from matchequity.h.
+    /// </summary>
+    private static float GetMET(int i, int j, float[,] met)
     {
         if (i < 0) return 1.0f;
         if (j < 0) return 0.0f;

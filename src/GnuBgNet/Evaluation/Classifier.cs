@@ -14,7 +14,8 @@ public static class Classifier
     /// <summary>
     /// Determine the position class for evaluation dispatch.
     /// </summary>
-    public static PositionClass Classify(Board board, Evaluator? evaluator = null)
+    public static PositionClass Classify(Board board, Evaluator? evaluator = null,
+        BackgammonVariation variation = BackgammonVariation.Standard)
     {
         int nOppBack, nBack;
 
@@ -29,7 +30,18 @@ public static class Classifier
         if (nBack < 0 || nOppBack < 0)
             return PositionClass.Over;
 
-        // Standard backgammon only (no hypergammon variants)
+        // Hypergammon variants: dispatch to precomputed bearoff databases
+        switch (variation)
+        {
+            case BackgammonVariation.Hypergammon1:
+                return PositionClass.Hypergammon1;
+            case BackgammonVariation.Hypergammon2:
+                return PositionClass.Hypergammon2;
+            case BackgammonVariation.Hypergammon3:
+                return PositionClass.Hypergammon3;
+        }
+
+        // Standard backgammon / Nackgammon
         if (nBack + nOppBack > 22)
         {
             // Contact position — check if crashed

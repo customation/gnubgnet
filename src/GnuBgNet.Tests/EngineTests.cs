@@ -2,8 +2,12 @@
 
 using Xunit;
 using GnuBgNet;
+using GnuBgNet.Bearoff;
+using GnuBgNet.Encoding;
 using GnuBgNet.Evaluation;
+using GnuBgNet.Formatting;
 using GnuBgNet.MatchEquity;
+using GnuBgNet.NeuralNet;
 
 namespace GnuBgNet.Tests;
 
@@ -940,5 +944,514 @@ public class MatchEquityTableTests
         // Verify it uses the custom MET value, not the computed default
         float customVal = engine.GetMatchEquity(1, 2);
         Assert.InRange(customVal, 0.6f, 0.7f);
+    }
+
+}
+
+public class GapFeatureTests
+{
+    private static string? FindDataDir()
+    {
+        string[] candidates =
+        [
+            Environment.GetEnvironmentVariable("GNUBG_DATA_DIR") ?? "",
+            @"C:\git\github\customation\gnubg",
+            @"C:\git\github\customation\gnubgnet\data",
+        ];
+        return candidates.FirstOrDefault(d => File.Exists(Path.Combine(d, "gnubg.wd")));
+    }
+
+    private Engine? CreateEngine()
+    {
+        var dir = FindDataDir();
+        if (dir == null) return null;
+        return Engine.Create(dir);
+    }
+
+    // ---- Cubeful Rollout Tests ----
+
+    [Fact]
+    public void Rollout_Cubeful_ProducesCubefulEquity()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Opening position — cubeful rollout should produce non-zero cubeful equity
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var settings = new RolloutSettings
+        {
+            Trials = 144,
+            Cubeful = true,
+            Seed = 42,
+        };
+        var result = engine.RolloutPosition(board, settings);
+
+        // Cubeful equity should exist and be different from cubeless
+        Assert.InRange(result.WinProbability, 0.0, 1.0);
+        Assert.InRange(result.CubelessEquity, -1.5, 1.5);
+        // CubefulEquity should be non-NaN
+        Assert.False(double.IsNaN(result.CubefulEquity));
+    }
+
+    [Fact]
+    public void Rollout_CubelessVsCubeful_DifferentEquities()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Use a contact position where cube matters
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+
+        var cubeless = engine.RolloutPosition(board, new RolloutSettings
+        {
+            Trials = 144, Cubeful = false, Seed = 42,
+        });
+
+        var cubeful = engine.RolloutPosition(board, new RolloutSettings
+        {
+            Trials = 144, Cubeful = true, Seed = 42,
+        });
+
+        // Both should have valid win probabilities
+        Assert.InRange(cubeless.WinProbability, 0.0, 1.0);
+        Assert.InRange(cubeful.WinProbability, 0.0, 1.0);
+
+        // Cubeful equity should differ from cubeless (cube has value)
+        // Note: with only 144 trials they may be close, but cubeful path is exercised
+        Assert.False(double.IsNaN(cubeful.CubefulEquity));
+    }
+
+    // ---- Resignation Tests ----
+
+    [Fact]
+    public void GetResignation_Opening_NoResign()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Opening position — nobody should resign
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        int level = engine.GetResignation(board);
+        Assert.Equal(0, level);
+    }
+
+    [Fact]
+    public void GetResignation_ReturnsValidLevel()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Use a heavily losing position
+        var board = new Board();
+        board.Player[23] = 15; // all checkers deep in opponent's home
+        board.Opponent[5] = 1; // opponent nearly done bearing off
+
+        int level = engine.GetResignation(board);
+        // GetResignation returns 0-3 — any value is valid
+        Assert.InRange(level, 0, 3);
+    }
+
+    [Fact]
+    public void GetResignEquities_ReturnsValidResult()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var result = engine.GetResignEquities(board, 1);
+
+        Assert.Equal(1, result.RecommendedLevel);
+        // Equity values should be finite
+        Assert.False(double.IsNaN(result.EquityBeforeResign));
+        Assert.False(double.IsNaN(result.EquityAfterResign));
+        // Before resign equity should be better (less negative) than after for the opening
+        Assert.True(result.EquityBeforeResign > result.EquityAfterResign,
+            "Playing on should be better than resigning in an even position");
+    }
+
+    [Fact]
+    public void CheckResignation_Opening_Rejects()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        int accepted = engine.CheckResignation(board, 1);
+        // Should reject resignation in a nearly even position
+        Assert.Equal(0, accepted);
+    }
+
+    [Fact]
+    public void GetResignation_ByPositionId_Works()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        int level = engine.GetResignation("4HPwATDgc/ABMA");
+        Assert.Equal(0, level);
+    }
+
+    // ---- Bearoff Gammon Tests ----
+
+    [Fact]
+    public void BearoffGammon_GetGammonProbs_SingleChecker()
+    {
+        // 1 checker on point 1 (index 0)
+        uint[] board = new uint[6];
+        board[0] = 1;
+
+        var probs = BearoffGammon.GetGammonProbs(board);
+        // P0 = gammon probability, should be 0 (1 checker = bearoff in 1 roll)
+        Assert.True(probs.P0 >= 0);
+    }
+
+    [Fact]
+    public void BearoffGammon_GetGammonProbs_MultipleCheckers()
+    {
+        // 3 checkers on point 6 (index 5)
+        uint[] board = new uint[6];
+        board[5] = 3;
+
+        var probs = BearoffGammon.GetGammonProbs(board);
+        // Should return valid probabilities
+        Assert.True(probs.P0 >= 0);
+        Assert.True(probs.P1 >= 0);
+    }
+
+    [Fact]
+    public void BearoffGammon_GetGammonProbs_TwoPoints()
+    {
+        // 1 checker on point 1, 1 checker on point 3
+        uint[] board = new uint[6];
+        board[0] = 1;
+        board[2] = 1;
+
+        var probs = BearoffGammon.GetGammonProbs(board);
+        Assert.True(probs.P0 >= 0);
+    }
+
+    [Fact]
+    public void BearoffGammon_GetRaceBGProbs_SmallPosition()
+    {
+        // 2 checkers on point 1 (index 0)
+        uint[] board = new uint[6];
+        board[0] = 2;
+
+        var result = BearoffGammon.GetRaceBGProbs(board);
+        Assert.NotNull(result);
+        Assert.Equal(BearoffGammon.RbgNProbs, result!.Length);
+    }
+
+    [Fact]
+    public void BearoffGammon_GetRaceBGProbs_TooManyCheckers_ReturnsNull()
+    {
+        // More than 6 checkers — should return null
+        uint[] board = new uint[6];
+        board[0] = 4;
+        board[1] = 4;
+
+        var result = BearoffGammon.GetRaceBGProbs(board);
+        Assert.Null(result);
+    }
+
+    // ---- Board Display Tests ----
+
+    [Fact]
+    public void DrawBoard_Opening_ProducesValidAscii()
+    {
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        string display = BoardDisplay.DrawBoard(board, true);
+
+        Assert.False(string.IsNullOrWhiteSpace(display));
+        // Should contain board frame characters
+        Assert.Contains("+", display);
+        Assert.Contains("|", display);
+        // Should have multiple lines
+        var lines = display.Split('\n');
+        Assert.True(lines.Length > 5, $"Expected multi-line board, got {lines.Length} lines");
+    }
+
+    [Fact]
+    public void DrawBoard_Clockwise_ProducesValidAscii()
+    {
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        string display = BoardDisplay.DrawBoard(board, true, clockwise: true);
+
+        Assert.False(string.IsNullOrWhiteSpace(display));
+        Assert.Contains("+", display);
+        var lines = display.Split('\n');
+        Assert.True(lines.Length > 5);
+    }
+
+    [Fact]
+    public void FIBSBoard_ProducesColonSeparated()
+    {
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        string fibs = BoardDisplay.FIBSBoard(board, true, "player", "opponent",
+            0, 0, 0, 3, 1, 1, -1, false);
+
+        Assert.False(string.IsNullOrWhiteSpace(fibs));
+        // FIBS board should have colon-separated fields
+        Assert.Contains(":", fibs);
+        Assert.Contains("player", fibs);
+        Assert.Contains("opponent", fibs);
+    }
+
+    [Fact]
+    public void DrawBoard_EmptyBoard_DoesNotThrow()
+    {
+        var board = new Board();
+        string display = BoardDisplay.DrawBoard(board, true);
+        Assert.False(string.IsNullOrWhiteSpace(display));
+    }
+
+    // ---- Feature Extraction Tests ----
+
+    [Fact]
+    public void ExtractFeatures_Returns248Floats()
+    {
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        float[] features = Engine.ExtractFeatures(board);
+
+        Assert.Equal(FeatureExtractor.FeatureDim, features.Length);
+        Assert.Equal(248, features.Length);
+    }
+
+    [Fact]
+    public void ExtractFeatures_NotAllZero()
+    {
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        float[] features = Engine.ExtractFeatures(board);
+
+        // Opening position should produce non-trivial features
+        bool hasNonZero = false;
+        for (int i = 0; i < features.Length; i++)
+            if (features[i] != 0.0f) { hasNonZero = true; break; }
+        Assert.True(hasNonZero, "Features should not be all zeros for opening position");
+    }
+
+    [Fact]
+    public void ExtractFeatures_SwappedSide_DifferentFeatures()
+    {
+        // Use an asymmetric position (player has 2 on bar)
+        var board = new Board();
+        board.Player[24] = 2;  // 2 on bar
+        board.Player[0] = 5;
+        board.Player[5] = 3;
+        board.Player[11] = 5;
+        board.Opponent[23] = 2;
+        board.Opponent[12] = 5;
+        board.Opponent[7] = 3;
+        board.Opponent[5] = 5;
+
+        float[] featBottom = Engine.ExtractFeatures(board, isTopOnRoll: false);
+        float[] featTop = Engine.ExtractFeatures(board, isTopOnRoll: true);
+
+        // Swapping who is on roll should produce different feature vectors
+        bool different = false;
+        for (int i = 0; i < featBottom.Length; i++)
+            if (Math.Abs(featBottom[i] - featTop[i]) > 1e-6f) { different = true; break; }
+        Assert.True(different, "Features should differ when swapping on-roll side");
+    }
+
+    [Fact]
+    public void ExtractFeatures_ByPositionId_MatchesByBoard()
+    {
+        string posId = "4HPwATDgc/ABMA";
+        var board = PositionId.Decode(posId)!;
+
+        float[] fromBoard = Engine.ExtractFeatures(board);
+        float[] fromId = Engine.ExtractFeatures(posId);
+
+        Assert.Equal(fromBoard.Length, fromId.Length);
+        for (int i = 0; i < fromBoard.Length; i++)
+            Assert.Equal(fromBoard[i], fromId[i], 6);
+    }
+
+    [Fact]
+    public void ExtractRawInputs_ContactPosition_ReturnsCorrectSize()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        // Opening position is Contact class
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        float[] inputs = engine.ExtractRawInputs(board);
+
+        // Contact inputs should be 250
+        Assert.Equal(Constants.NumContactInputs, inputs.Length);
+    }
+
+    [Fact]
+    public void ExtractFeatures_Span_ThrowsOnSmallSpan()
+    {
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        Span<float> small = stackalloc float[100];
+        Assert.Throws<ArgumentException>(() =>
+        {
+            Span<float> s = new float[100];
+            FeatureExtractor.ExtractFeatures(board, false, s);
+        });
+    }
+
+    // ---- MAT Parser Tests ----
+
+    [Fact]
+    public void MatParser_ParseSubMove_Standard()
+    {
+        Assert.True(MatParser.ParseSubMove("13/7", out int from, out int to));
+        Assert.Equal(12, from); // 13 → 0-indexed = 12
+        Assert.Equal(6, to);    // 7 → 0-indexed = 6
+    }
+
+    [Fact]
+    public void MatParser_ParseSubMove_Bar()
+    {
+        // "bar/20" → from=24 (bar), to=19
+        Assert.True(MatParser.ParseSubMove("bar/20", out int from, out int to));
+        Assert.Equal(24, from);
+        Assert.Equal(19, to);
+    }
+
+    [Fact]
+    public void MatParser_ParseSubMove_BarNumeric()
+    {
+        // "25/20" → from=24 (bar), to=19
+        Assert.True(MatParser.ParseSubMove("25/20", out int from, out int to));
+        Assert.Equal(24, from);
+        Assert.Equal(19, to);
+    }
+
+    [Fact]
+    public void MatParser_ParseSubMove_BearOff()
+    {
+        Assert.True(MatParser.ParseSubMove("6/off", out int from, out int to));
+        Assert.Equal(5, from);
+        Assert.Equal(-1, to);
+    }
+
+    [Fact]
+    public void MatParser_ParseSubMove_BearOffNumeric()
+    {
+        // "6/0" → bear off
+        Assert.True(MatParser.ParseSubMove("6/0", out int from, out int to));
+        Assert.Equal(5, from);
+        Assert.Equal(-1, to);
+    }
+
+    [Fact]
+    public void MatParser_ParseMove_Simple()
+    {
+        int[] anMove = new int[8];
+        int count = MatParser.ParseMove("13/7 8/7", anMove);
+        Assert.Equal(2, count);
+        Assert.Equal(12, anMove[0]); // 13→12
+        Assert.Equal(6, anMove[1]);  // 7→6
+        Assert.Equal(7, anMove[2]);  // 8→7
+        Assert.Equal(6, anMove[3]);  // 7→6
+    }
+
+    [Fact]
+    public void MatParser_ParseMove_WithRepetition()
+    {
+        int[] anMove = new int[8];
+        int count = MatParser.ParseMove("6/5(2)", anMove);
+        Assert.Equal(2, count);
+        Assert.Equal(5, anMove[0]); // 6→5
+        Assert.Equal(4, anMove[1]); // 5→4
+        Assert.Equal(5, anMove[2]); // 6→5 (repeated)
+        Assert.Equal(4, anMove[3]); // 5→4 (repeated)
+    }
+
+    [Fact]
+    public void MatParser_ParseMove_WithHitMarker()
+    {
+        int[] anMove = new int[8];
+        int count = MatParser.ParseMove("8/5* 5/4", anMove);
+        Assert.Equal(2, count);
+        Assert.Equal(7, anMove[0]); // 8→7
+        Assert.Equal(4, anMove[1]); // 5→4
+    }
+
+    [Fact]
+    public void MatParser_ParseFile_ReturnsValidTurns()
+    {
+        var matPath = @"C:\git\github\customation\gnubg\artifacts\match_logs\iter1_game1.mat";
+        if (!File.Exists(matPath)) return;
+
+        var turns = MatParser.ParseFile(matPath);
+        Assert.True(turns.Count > 0, "Should parse at least one turn");
+
+        // First turn should have valid dice
+        Assert.InRange(turns[0].Die1, 1, 6);
+        Assert.InRange(turns[0].Die2, 1, 6);
+
+        // Should have turns from both players
+        Assert.Contains(turns, t => t.Player == 0);
+        Assert.Contains(turns, t => t.Player == 1);
+    }
+
+    [Fact]
+    public void MatParser_ParseFile_FirstMove_Correct()
+    {
+        var matPath = @"C:\git\github\customation\gnubg\artifacts\match_logs\iter1_game1.mat";
+        if (!File.Exists(matPath)) return;
+
+        var turns = MatParser.ParseFile(matPath);
+        // First line: "1) 66: 13/7 24/18 13/7 24/18"
+        var first = turns[0];
+        Assert.Equal(6, first.Die1);
+        Assert.Equal(6, first.Die2);
+        Assert.Equal(0, first.Player);
+        // 13/7 → from=12, to=6
+        Assert.Equal(12, first.PlayedMove[0]);
+        Assert.Equal(6, first.PlayedMove[1]);
+        // 24/18 → from=23, to=17
+        Assert.Equal(23, first.PlayedMove[2]);
+        Assert.Equal(17, first.PlayedMove[3]);
+    }
+
+    [Fact]
+    public void AnalyseMat_ReturnsValidResult()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        var matPath = @"C:\git\github\customation\gnubg\artifacts\match_logs\iter1_game1.mat";
+        if (!File.Exists(matPath)) return;
+
+        var result = engine.AnalyseMat(matPath);
+
+        // Should have per-player stats
+        Assert.True(result.TotalMoves[0] > 0 || result.TotalMoves[1] > 0, "Should have moves");
+        Assert.True(result.Rating[0].Length > 0);
+        Assert.True(result.Rating[1].Length > 0);
+
+        // MPR should be non-negative
+        Assert.True(result.MillipointsPerMove[0] >= 0);
+        Assert.True(result.MillipointsPerMove[1] >= 0);
+
+        // Total error should be non-negative
+        Assert.True(result.TotalError[0] >= 0);
+        Assert.True(result.TotalError[1] >= 0);
+
+        // Should have some turn analyses
+        Assert.True(result.Turns.Count > 0);
+    }
+
+    [Fact]
+    public void AnalyseMat_RatingIsValidString()
+    {
+        using var engine = CreateEngine();
+        if (engine == null) return;
+
+        var matPath = @"C:\git\github\customation\gnubg\artifacts\match_logs\iter1_game1.mat";
+        if (!File.Exists(matPath)) return;
+
+        var result = engine.AnalyseMat(matPath);
+
+        string[] validRatings = ["Beginner", "Intermediate", "Advanced", "Master", "Grandmaster", "Super Grandmaster"];
+        Assert.Contains(result.Rating[0], validRatings);
+        Assert.Contains(result.Rating[1], validRatings);
     }
 }

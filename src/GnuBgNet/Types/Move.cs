@@ -86,6 +86,9 @@ public sealed class GameTurn
     public bool IsCubeAction { get; init; }
     public bool Doubled { get; init; }
     public bool Took { get; init; }
+
+    /// <summary>Player index (0 or 1). Used by MAT analysis to track which side is on roll.</summary>
+    public int Player { get; init; }
 }
 
 /// <summary>
@@ -126,4 +129,47 @@ public sealed class GameAnalysis
     public double AverageEquityLoss { get; init; }
     public int ErrorCount { get; init; }
     public int BlunderCount { get; init; }
+}
+
+/// <summary>
+/// GnuBG skill classification levels.
+/// Port of skilltype from gnubgapi.h.
+/// </summary>
+public enum SkillLevel
+{
+    VeryBad = 0,  // blunder (equity loss > 0.12)
+    Bad = 1,      // equity loss > 0.06
+    Doubtful = 2, // equity loss > 0.03
+    None = 3,     // good move
+}
+
+/// <summary>
+/// Result of MAT file analysis with per-player statistics.
+/// Port of gnubgapi_analysis_result from gnubgapi.h.
+/// </summary>
+public sealed class MatAnalysisResult
+{
+    /// <summary>Per-turn analysis details.</summary>
+    public IReadOnlyList<TurnAnalysis> Turns { get; init; } = [];
+
+    /// <summary>Total moves per player [0] and [1].</summary>
+    public int[] TotalMoves { get; init; } = new int[2];
+
+    /// <summary>Unforced moves (decisions) per player.</summary>
+    public int[] UnforcedMoves { get; init; } = new int[2];
+
+    /// <summary>Skill counts [player, skill level]. Dimensions: [2, 4].</summary>
+    public int[,] SkillCounts { get; init; } = new int[2, 4];
+
+    /// <summary>Total equity error per player.</summary>
+    public float[] TotalError { get; init; } = new float[2];
+
+    /// <summary>Error per unforced move per player.</summary>
+    public float[] ErrorPerMove { get; init; } = new float[2];
+
+    /// <summary>Millipoints per move (error_per_move × 1000).</summary>
+    public float[] MillipointsPerMove { get; init; } = new float[2];
+
+    /// <summary>Rating string per player ("Beginner" .. "Super Grandmaster").</summary>
+    public string[] Rating { get; init; } = ["Beginner", "Beginner"];
 }
