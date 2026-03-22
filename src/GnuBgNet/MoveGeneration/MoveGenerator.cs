@@ -62,7 +62,7 @@ public static class MoveGenerator
         {
             int src = move.AnMove[i * 2];
             int nRoll = src - move.AnMove[i * 2 + 1];
-            ApplySubMove(newBoard, src, nRoll);
+            ApplySubMove(ref newBoard,src, nRoll);
         }
         return newBoard;
     }
@@ -107,7 +107,7 @@ public static class MoveGenerator
             else
                 nRoll = src - dest;
 
-            ApplySubMove(newBoard, src, nRoll);
+            ApplySubMove(ref newBoard,src, nRoll);
         }
         return newBoard;
     }
@@ -129,7 +129,7 @@ public static class MoveGenerator
             anMoves[nMoveDepth * 2 + 1] = 24 - anRoll[nMoveDepth];
 
             var newBoard = board.Clone();
-            ApplySubMove(newBoard, 24, anRoll[nMoveDepth]);
+            ApplySubMove(ref newBoard,24, anRoll[nMoveDepth]);
 
             if (GenerateMovesSub(ml, anRoll, nMoveDepth + 1, 23,
                     cPip + anRoll[nMoveDepth], newBoard, anMoves))
@@ -148,7 +148,7 @@ public static class MoveGenerator
             anMoves[nMoveDepth * 2 + 1] = i - anRoll[nMoveDepth];
 
             var newBoard = board.Clone();
-            ApplySubMove(newBoard, i, anRoll[nMoveDepth]);
+            ApplySubMove(ref newBoard,i, anRoll[nMoveDepth]);
 
             int nextIPip = (anRoll[0] == anRoll[1]) ? i : 23;
 
@@ -177,7 +177,7 @@ public static class MoveGenerator
         return nBack <= 5 && (iSrc == nBack || iDest == -1);
     }
 
-    private static void ApplySubMove(Board board, int iSrc, int nRoll)
+    private static void ApplySubMove(ref Board board, int iSrc, int nRoll)
     {
         int iDest = iSrc - nRoll;
         board.Player[iSrc]--;

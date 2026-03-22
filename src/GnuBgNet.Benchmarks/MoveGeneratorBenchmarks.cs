@@ -10,8 +10,8 @@ namespace GnuBgNet.Benchmarks;
 [MemoryDiagnoser]
 public class MoveGeneratorBenchmarks
 {
-    private Board _openingBoard = null!;
-    private Board _contactBoard = null!;
+    private Board _openingBoard;
+    private Board _contactBoard;
     private readonly DefaultMoveGenerator _original = DefaultMoveGenerator.Instance;
     private readonly UndoStackMoveGenerator _undoStack = UndoStackMoveGenerator.Instance;
 

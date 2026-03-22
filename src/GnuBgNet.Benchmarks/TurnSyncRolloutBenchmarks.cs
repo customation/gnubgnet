@@ -21,7 +21,7 @@ public class TurnSyncRolloutBenchmarks
     private Evaluator _evaluator = null!;
     private RolloutEngine _originalRollout = null!;
     private TurnSynchronousRolloutEngine _turnSync = null!;
-    private Board _contactBoard = null!;
+    private Board _contactBoard;
 
     [Params(36, 144)]
     public int NumTrials { get; set; }

@@ -167,7 +167,7 @@ public static class InputCalculator
         // Side 0 = Opponent (anBoard[0]), Side 1 = Player (anBoard[1])
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
             int offset = side * 25 * 4;
 
             // 24 points
@@ -201,7 +201,7 @@ public static class InputCalculator
     {
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
             int offset = side * HalfRaceInputs;
 
             uint menOff = 15;
@@ -280,15 +280,15 @@ public static class InputCalculator
         // Side 0 block (at offset 200): menOff uses Opponent (accidentally switched in training)
         {
             var b = arInput.Slice(MINPPERPOINT * 25 * 2);
-            MenOffNonCrashed(board.Opponent, b.Slice(I_OFF1));
-            CalculateHalfInputs(board.Player, board.Opponent, b);
+            MenOffNonCrashed(board.Opponent.AsReadOnlySpan(), b.Slice(I_OFF1));
+            CalculateHalfInputs(board.Player.AsReadOnlySpan(), board.Opponent.AsReadOnlySpan(), b);
         }
 
         // Side 1 block (at offset 225)
         {
             var b = arInput.Slice(MINPPERPOINT * 25 * 2 + MORE_INPUTS);
-            MenOffNonCrashed(board.Player, b.Slice(I_OFF1));
-            CalculateHalfInputs(board.Opponent, board.Player, b);
+            MenOffNonCrashed(board.Player.AsReadOnlySpan(), b.Slice(I_OFF1));
+            CalculateHalfInputs(board.Opponent.AsReadOnlySpan(), board.Player.AsReadOnlySpan(), b);
         }
     }
 
@@ -303,15 +303,15 @@ public static class InputCalculator
         // Side 0 block: uses Player for menOff (swapped from contact)
         {
             var b = arInput.Slice(MINPPERPOINT * 25 * 2);
-            MenOffAll(board.Player, b.Slice(I_OFF1));
-            CalculateHalfInputs(board.Player, board.Opponent, b);
+            MenOffAll(board.Player.AsReadOnlySpan(), b.Slice(I_OFF1));
+            CalculateHalfInputs(board.Player.AsReadOnlySpan(), board.Opponent.AsReadOnlySpan(), b);
         }
 
         // Side 1 block
         {
             var b = arInput.Slice(MINPPERPOINT * 25 * 2 + MORE_INPUTS);
-            MenOffAll(board.Opponent, b.Slice(I_OFF1));
-            CalculateHalfInputs(board.Opponent, board.Player, b);
+            MenOffAll(board.Opponent.AsReadOnlySpan(), b.Slice(I_OFF1));
+            CalculateHalfInputs(board.Opponent.AsReadOnlySpan(), board.Player.AsReadOnlySpan(), b);
         }
     }
 
@@ -319,7 +319,7 @@ public static class InputCalculator
     /// Men off for crashed positions (wider buckets: 0-5, 5-10, 10-15).
     /// Port of menOffAll() from eval.c.
     /// </summary>
-    private static void MenOffAll(uint[] anBoard, Span<float> afInput)
+    private static void MenOffAll(ReadOnlySpan<uint> anBoard, Span<float> afInput)
     {
         int menOff = 15;
         for (int i = 0; i < 25; i++)
@@ -349,7 +349,7 @@ public static class InputCalculator
     /// Men off for contact positions (tighter buckets: 0-2, 2-5, 5-8).
     /// Port of menOffNonCrashed() from eval.c.
     /// </summary>
-    private static void MenOffNonCrashed(uint[] anBoard, Span<float> afInput)
+    private static void MenOffNonCrashed(ReadOnlySpan<uint> anBoard, Span<float> afInput)
     {
         int menOff = 15;
         for (int i = 0; i < 25; i++)
@@ -379,7 +379,7 @@ public static class InputCalculator
     /// Calculate 25 contact-specific inputs for one side.
     /// Port of CalculateHalfInputs() from eval.c (~677 lines).
     /// </summary>
-    private static void CalculateHalfInputs(uint[] anBoard, uint[] anBoardOpp, Span<float> afInput)
+    private static void CalculateHalfInputs(ReadOnlySpan<uint> anBoard, ReadOnlySpan<uint> anBoardOpp, Span<float> afInput)
     {
         int nOppBack;
         Span<int> aHit = stackalloc int[39];

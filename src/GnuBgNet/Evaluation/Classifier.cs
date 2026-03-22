@@ -48,7 +48,7 @@ public static class Classifier
             const uint N = 6;
             for (int side = 0; side < 2; ++side)
             {
-                uint[] b = side == 0 ? board.Opponent : board.Player;
+                ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
                 uint tot = 0;
                 for (int i = 0; i < 25; ++i)
                     tot += b[i];
@@ -90,7 +90,7 @@ public static class Classifier
         // Check both sides have all checkers within the bearoff range
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
             // Checkers must be on points 0..(nPoints-1) only
             for (int i = db.Points; i < 25; i++)
                 if (b[i] > 0) return false;

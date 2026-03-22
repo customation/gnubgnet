@@ -684,8 +684,8 @@ public sealed class Engine : IDisposable
 
             // Generate and evaluate all moves
             var rankedMoves = plies > 0
-                ? GenerateMovesWithEvalPlied(board, turn.Die1, turn.Die2, plies)
-                : GenerateMovesWithEval(board, turn.Die1, turn.Die2);
+                ? GenerateMovesWithEvalPlied(board.Value, turn.Die1, turn.Die2, plies)
+                : GenerateMovesWithEval(board.Value, turn.Die1, turn.Die2);
 
             if (rankedMoves.Count == 0) continue;
 

@@ -289,7 +289,7 @@ public sealed class TurnSynchronousRolloutEngine
 
     private class TrialState
     {
-        public Board Board = null!;
+        public Board Board;
         public bool Active;
         public int Turn;
         public float[] Outputs = null!;

@@ -40,8 +40,8 @@ public sealed class OneSidedRollout
         Span<float> distPlayer = stackalloc float[32];
         Span<float> distOpponent = stackalloc float[32];
 
-        SimulateSide(board.Player, nGames, distPlayer, out muPlayer);
-        SimulateSide(board.Opponent, nGames, distOpponent, out muOpponent);
+        SimulateSide(board.Player.AsReadOnlySpan(), nGames, distPlayer, out muPlayer);
+        SimulateSide(board.Opponent.AsReadOnlySpan(), nGames, distOpponent, out muOpponent);
 
         // Combine distributions to get win/gammon/backgammon probabilities
         // P(win) = sum over i: P_player(i) * P_opponent_not_finished(i)
@@ -103,7 +103,7 @@ public sealed class OneSidedRollout
     /// If all checkers are in home board and within bearoff DB range, use DB lookup.
     /// Otherwise, do Monte Carlo simulation.
     /// </summary>
-    private void SimulateSide(uint[] side, uint nGames, Span<float> dist, out float mu)
+    private void SimulateSide(ReadOnlySpan<uint> side, uint nGames, Span<float> dist, out float mu)
     {
         mu = 0;
         for (int i = 0; i < 32; i++) dist[i] = 0;
@@ -135,7 +135,7 @@ public sealed class OneSidedRollout
         for (uint game = 0; game < nGames; game++)
         {
             var rng = new MersenneTwister(game);
-            uint[] working = (uint[])side.Clone();
+            uint[] working = side.ToArray();
             int rolls = 0;
 
             // Roll until all checkers in home board

@@ -49,13 +49,13 @@ public static class FeatureExtractor
         baseInputs[..BasePerSide].CopyTo(features);
 
         // Bottom player contact features
-        ExtractContactFeatures(evalBoard.Opponent, evalBoard.Player, features[BasePerSide..]);
+        ExtractContactFeatures(evalBoard.Opponent.AsReadOnlySpan(), evalBoard.Player.AsReadOnlySpan(), features[BasePerSide..]);
 
         // Top player base features (second 100 from anBoard[1] = Player)
         baseInputs.Slice(BasePerSide, BasePerSide).CopyTo(features[(BasePerSide + ContactPerSide)..]);
 
         // Top player contact features
-        ExtractContactFeatures(evalBoard.Player, evalBoard.Opponent,
+        ExtractContactFeatures(evalBoard.Player.AsReadOnlySpan(), evalBoard.Opponent.AsReadOnlySpan(),
             features[(2 * BasePerSide + ContactPerSide)..]);
     }
 
@@ -98,7 +98,7 @@ public static class FeatureExtractor
     /// Port of contact_features_24() from gnubgapi.c lines 1336-1592.
     /// These include men off, back checker, anchors, piploss, mobility, containment, etc.
     /// </summary>
-    private static void ExtractContactFeatures(uint[] anBoard, uint[] anBoardOpp, Span<float> features)
+    private static void ExtractContactFeatures(ReadOnlySpan<uint> anBoard, ReadOnlySpan<uint> anBoardOpp, Span<float> features)
     {
         // I_OFF1, I_OFF2, I_OFF3 (men off - tiered encoding)
         int menOff = 15;

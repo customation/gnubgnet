@@ -17,9 +17,9 @@ public class FullEvaluationBenchmarks
 {
     private Evaluator _originalEval = null!;
     private Evaluator _optimizedEval = null!;
-    private Board _openingBoard = null!;
-    private Board _contactBoard = null!;
-    private Board _raceBoard = null!;
+    private Board _openingBoard;
+    private Board _contactBoard;
+    private Board _raceBoard;
 
     [GlobalSetup]
     public void Setup()

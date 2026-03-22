@@ -38,15 +38,15 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
         if (n0 == n1)
         {
             int[] anRoll = [n0, n0, n0, n0];
-            GenerateMovesSub(ml, anRoll, 0, 23, 0, board, anMoves);
+            GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
         }
         else
         {
             int[] anRoll1 = [n0, n1, 0, 0];
-            GenerateMovesSub(ml, anRoll1, 0, 23, 0, board, anMoves);
+            GenerateMovesSub(ml, anRoll1, 0, 23, 0, ref board, anMoves);
 
             int[] anRoll2 = [n1, n0, 0, 0];
-            GenerateMovesSub(ml, anRoll2, 0, 23, 0, board, anMoves);
+            GenerateMovesSub(ml, anRoll2, 0, 23, 0, ref board, anMoves);
         }
     }
 
@@ -128,7 +128,7 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
         public bool WasHit;
     }
 
-    private static UndoInfo ApplySubMoveInPlace(Board board, int iSrc, int nRoll)
+    private static UndoInfo ApplySubMoveInPlace(ref Board board, int iSrc, int nRoll)
     {
         int iDest = iSrc - nRoll;
         var undo = new UndoInfo { Src = iSrc, Dest = iDest, WasHit = false };
@@ -149,7 +149,7 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
         return undo;
     }
 
-    private static void UndoSubMove(Board board, in UndoInfo undo)
+    private static void UndoSubMove(ref Board board, in UndoInfo undo)
     {
         board.Player[undo.Src]++;
 
@@ -180,7 +180,7 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
     }
 
     private static bool GenerateMovesSub(MoveList ml, int[] anRoll, int nMoveDepth,
-        int iPip, int cPip, Board board, Span<int> anMoves)
+        int iPip, int cPip, ref Board board, Span<int> anMoves)
     {
         if (nMoveDepth > 3 || anRoll[nMoveDepth] == 0)
             return true;
@@ -194,13 +194,13 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
             anMoves[nMoveDepth * 2] = 24;
             anMoves[nMoveDepth * 2 + 1] = 24 - anRoll[nMoveDepth];
 
-            var undo = ApplySubMoveInPlace(board, 24, anRoll[nMoveDepth]);
+            var undo = ApplySubMoveInPlace(ref board, 24, anRoll[nMoveDepth]);
 
             if (GenerateMovesSub(ml, anRoll, nMoveDepth + 1, 23,
-                    cPip + anRoll[nMoveDepth], board, anMoves))
+                    cPip + anRoll[nMoveDepth], ref board, anMoves))
                 SaveMoves(ml, nMoveDepth + 1, (uint)(cPip + anRoll[nMoveDepth]), anMoves, board);
 
-            UndoSubMove(board, in undo);
+            UndoSubMove(ref board, in undo);
 
             return false;
         }
@@ -214,15 +214,15 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
             anMoves[nMoveDepth * 2] = i;
             anMoves[nMoveDepth * 2 + 1] = i - anRoll[nMoveDepth];
 
-            var undo = ApplySubMoveInPlace(board, i, anRoll[nMoveDepth]);
+            var undo = ApplySubMoveInPlace(ref board, i, anRoll[nMoveDepth]);
 
             int nextIPip = (anRoll[0] == anRoll[1]) ? i : 23;
 
             if (GenerateMovesSub(ml, anRoll, nMoveDepth + 1, nextIPip,
-                    cPip + anRoll[nMoveDepth], board, anMoves))
+                    cPip + anRoll[nMoveDepth], ref board, anMoves))
                 SaveMoves(ml, nMoveDepth + 1, (uint)(cPip + anRoll[nMoveDepth]), anMoves, board);
 
-            UndoSubMove(board, in undo);
+            UndoSubMove(ref board, in undo);
 
             fUsed = true;
         }

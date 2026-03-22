@@ -27,21 +27,7 @@ public sealed class Evaluator : IPositionEvaluator
     private readonly IMoveGenerator _moveGen;
     private readonly IInputCalculator _inputCalc;
 
-    // Thread-local board pool for hot-path reuse (avoids Board allocation per eval).
-    // Stack-based so nested/recursive calls each get their own board.
-    [ThreadStatic] private static Stack<Board>? t_boardPool;
-
-    private static Board RentBoard()
-    {
-        t_boardPool ??= new Stack<Board>();
-        return t_boardPool.Count > 0 ? t_boardPool.Pop() : new Board();
-    }
-
-    private static void ReturnBoard(Board board)
-    {
-        t_boardPool ??= new Stack<Board>();
-        t_boardPool.Push(board);
-    }
+    // Board is now a stack-allocated struct — no pooling needed.
 
     internal IBearoffDatabase? OneSidedBearoff { get; }
     internal IBearoffDatabase? TwoSidedBearoff { get; }
@@ -340,11 +326,9 @@ public sealed class Evaluator : IPositionEvaluator
     internal void ScoreMove(Move move, int nPlies, CubeInfo? ci, bool cubeful)
     {
         Span<float> arEval = stackalloc float[Constants.NumRolloutOutputs];
-        var moveBoard = RentBoard();
-        PositionId.FromKeySwappedInto(move.Key, moveBoard);
+        var moveBoard = new Board();
+        PositionId.FromKeySwappedInto(move.Key, ref moveBoard);
 
-        try
-        {
         if (cubeful && ci != null)
         {
             // Create opponent-perspective cube info for after the move
@@ -393,11 +377,6 @@ public sealed class Evaluator : IPositionEvaluator
             ? arEval[Constants.OutputCubefulEquity]
             : arEval[Constants.OutputEquity];
         move.Score2 = arEval[Constants.OutputEquity];
-        }
-        finally
-        {
-            ReturnBoard(moveBoard);
-        }
     }
 
     /// <summary>Sort moves by score descending (best first).</summary>
@@ -438,61 +417,54 @@ public sealed class Evaluator : IPositionEvaluator
             Variation = ci.Variation,
         } : null;
 
-        var pruneBoard = RentBoard();
-        try
+        var pruneBoard = new Board();
+        Span<float> pruneInputs = stackalloc float[Constants.NumPruningInputs];
+        for (int i = 0; i < ml.Moves.Count; i++)
         {
-            Span<float> pruneInputs = stackalloc float[Constants.NumPruningInputs];
-            for (int i = 0; i < ml.Moves.Count; i++)
+            PositionId.FromKeySwappedInto(ml.Moves[i].Key, ref pruneBoard);
+            var pc = Classifier.Classify(pruneBoard, this);
+
+            if (i == 0)
             {
-                PositionId.FromKeySwappedInto(ml.Moves[i].Key, pruneBoard);
-                var pc = Classifier.Classify(pruneBoard, this);
-
-                if (i == 0)
-                {
-                    if (pc < PositionClass.Race)
-                        return false;
-                    evalClass = pc;
-                }
-                else if (pc != evalClass)
+                if (pc < PositionClass.Race)
                     return false;
+                evalClass = pc;
+            }
+            else if (pc != evalClass)
+                return false;
 
-                var key = ml.Moves[i].Key;
-                uint l = _pruneCache.Lookup(key, 0, arOutput);
-                if (l != EvalCache.CacheHit)
+            var key = ml.Moves[i].Key;
+            uint l = _pruneCache.Lookup(key, 0, arOutput);
+            if (l != EvalCache.CacheHit)
+            {
+                pruneInputs.Clear();
+                _inputCalc.BaseInputs(pruneBoard, pruneInputs);
+
+                var net = evalClass switch
                 {
-                    pruneInputs.Clear();
-                    _inputCalc.BaseInputs(pruneBoard, pruneInputs);
+                    PositionClass.Race => _nets.PruneRace,
+                    PositionClass.Crashed => _nets.PruneCrashed,
+                    _ => _nets.PruneContact,
+                };
+                net.Evaluate(pruneInputs, arOutput);
 
-                    var net = evalClass switch
-                    {
-                        PositionClass.Race => _nets.PruneRace,
-                        PositionClass.Crashed => _nets.PruneCrashed,
-                        _ => _nets.PruneContact,
-                    };
-                    net.Evaluate(pruneInputs, arOutput);
+                // Correct backgammon probabilities for race positions
+                if (evalClass == PositionClass.Race)
+                    EvalRaceBG(pruneBoard, arOutput);
 
-                    // Correct backgammon probabilities for race positions
-                    if (evalClass == PositionClass.Race)
-                        EvalRaceBG(pruneBoard, arOutput);
+                SanityCheck(pruneBoard, arOutput);
 
-                    SanityCheck(pruneBoard, arOutput);
-
-                    _pruneCache.Add(key, 0, arOutput, l);
-                }
-
-                // Score from opponent's perspective using opponent's gammon prices,
-                // negated so higher = better for us.
-                // The C code (FindBestMoveInEval) flips fMove and keeps moves with the
-                // LOWEST opponent utility; we negate so SelectTopMoves (highest) is correct.
-                ml.Moves[i].Score = -ComputeEquity(arOutput, ciOpp);
+                _pruneCache.Add(key, 0, arOutput, l);
             }
 
-            return true;
+            // Score from opponent's perspective using opponent's gammon prices,
+            // negated so higher = better for us.
+            // The C code (FindBestMoveInEval) flips fMove and keeps moves with the
+            // LOWEST opponent utility; we negate so SelectTopMoves (highest) is correct.
+            ml.Moves[i].Score = -ComputeEquity(arOutput, ciOpp);
         }
-        finally
-        {
-            ReturnBoard(pruneBoard);
-        }
+
+        return true;
     }
 
     /// <summary>
@@ -531,24 +503,20 @@ public sealed class Evaluator : IPositionEvaluator
             float bestScore = float.MinValue;
             int bestIdx = 0;
             Span<float> output = stackalloc float[Constants.NumOutputs];
-            var scratchBoard = RentBoard();
-            try
+            var scratchBoard = new Board();
+            for (int i = 0; i < candidates.Count; i++)
             {
-                for (int i = 0; i < candidates.Count; i++)
-                {
-                    PositionId.FromKeySwappedInto(candidates[i].Key, scratchBoard);
-                    EvaluatePosition(scratchBoard, output);
-                    InvertEvaluation(output);
+                PositionId.FromKeySwappedInto(candidates[i].Key, ref scratchBoard);
+                EvaluatePosition(scratchBoard, output);
+                InvertEvaluation(output);
 
-                    float score = ComputeEquity(output, ci);
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        bestIdx = i;
-                    }
+                float score = ComputeEquity(output, ci);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
                 }
             }
-            finally { ReturnBoard(scratchBoard); }
 
             return candidates[bestIdx].Key;
         }
@@ -580,24 +548,20 @@ public sealed class Evaluator : IPositionEvaluator
             float bestScore = float.MinValue;
             int bestIdx = 0;
             Span<float> output = stackalloc float[Constants.NumOutputs];
-            var scratchBoard = RentBoard();
-            try
+            var scratchBoard = new Board();
+            for (int i = 0; i < ml.Moves.Count; i++)
             {
-                for (int i = 0; i < ml.Moves.Count; i++)
-                {
-                    PositionId.FromKeySwappedInto(ml.Moves[i].Key, scratchBoard);
-                    EvaluatePosition(scratchBoard, output);
-                    InvertEvaluation(output);
+                PositionId.FromKeySwappedInto(ml.Moves[i].Key, ref scratchBoard);
+                EvaluatePosition(scratchBoard, output);
+                InvertEvaluation(output);
 
-                    float score = ComputeEquity(output, ci);
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        bestIdx = i;
-                    }
+                float score = ComputeEquity(output, ci);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
                 }
             }
-            finally { ReturnBoard(scratchBoard); }
 
             return ml.Moves[bestIdx].Key;
         }
@@ -766,8 +730,8 @@ public sealed class Evaluator : IPositionEvaluator
     private float RaceBGprob(Board board, int side)
     {
         // side: 1 = player (anBoard[1]), 0 = opponent (anBoard[0])
-        uint[] sideBoard = side == 1 ? board.Player : board.Opponent;
-        uint[] oppBoard = side == 1 ? board.Opponent : board.Player;
+        ReadOnlySpan<uint> sideBoard = side == 1 ? board.Player.AsReadOnlySpan() : board.Opponent.AsReadOnlySpan();
+        ReadOnlySpan<uint> oppBoard = side == 1 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
 
         int totMenHome = 0;
         for (int i = 0; i < 6; ++i)
@@ -783,15 +747,11 @@ public sealed class Evaluator : IPositionEvaluator
 
         // Create dummy board: keep side's pieces, map opponent's last 6 points to first 6
         // In C: dummy[side] = anBoard[side], dummy[1-side][0..5] = anBoard[1-side][18..23], rest = 0
-        var dummy = RentBoard();
-        try
-        {
-        Array.Clear(dummy.Player);
-        Array.Clear(dummy.Opponent);
-        uint[] dummyPlayer = side == 1 ? dummy.Player : dummy.Opponent;
-        uint[] dummyOpp = side == 1 ? dummy.Opponent : dummy.Player;
+        var dummy = new Board();
+        Span<uint> dummyPlayer = side == 1 ? dummy.Player.AsSpan() : dummy.Opponent.AsSpan();
+        Span<uint> dummyOpp = side == 1 ? dummy.Opponent.AsSpan() : dummy.Player.AsSpan();
 
-        Array.Copy(sideBoard, dummyPlayer, 25);
+        sideBoard.CopyTo(dummyPlayer);
         for (int i = 0; i < 6; ++i)
             dummyOpp[i] = oppBoard[18 + i];
 
@@ -799,8 +759,8 @@ public sealed class Evaluator : IPositionEvaluator
         float result = 0.0f;
         if (TwoSidedBearoff != null)
         {
-            uint pos0 = PositionId.PositionBearoff(dummy.Opponent, TwoSidedBearoff.Points, TwoSidedBearoff.Chequers);
-            uint pos1 = PositionId.PositionBearoff(dummy.Player, TwoSidedBearoff.Points, TwoSidedBearoff.Chequers);
+            uint pos0 = PositionId.PositionBearoff(dummy.Opponent.AsReadOnlySpan(), TwoSidedBearoff.Points, TwoSidedBearoff.Chequers);
+            uint pos1 = PositionId.PositionBearoff(dummy.Player.AsReadOnlySpan(), TwoSidedBearoff.Points, TwoSidedBearoff.Chequers);
             if (pos0 < TwoSidedBearoff.NumPositions && pos1 < TwoSidedBearoff.NumPositions)
             {
                 Span<float> ar = stackalloc float[Constants.NumOutputs];
@@ -820,11 +780,6 @@ public sealed class Evaluator : IPositionEvaluator
         }
 
         return result;
-        }
-        finally
-        {
-            ReturnBoard(dummy);
-        }
     }
 
     private void EvalContact(Board board, Span<float> output)
@@ -951,7 +906,7 @@ public sealed class Evaluator : IPositionEvaluator
 
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
 
             for (int i = 0; i < 6; i++)
             {
@@ -994,7 +949,7 @@ public sealed class Evaluator : IPositionEvaluator
         {
             for (int i = 0; i < 2; i++)
             {
-                uint[] b = i == 0 ? board.Opponent : board.Player;
+                ReadOnlySpan<uint> b = i == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
                 if (anBack[i] < 6 && OneSidedBearoff != null)
                     anMaxTurns[i] = MaxTurns(
                         PositionId.PositionBearoff(b, OneSidedBearoff.Points, OneSidedBearoff.Chequers));

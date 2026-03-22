@@ -1008,7 +1008,7 @@ public class GapFeatureTests
         if (engine == null) return;
 
         // Opening position — cubeful rollout should produce non-zero cubeful equity
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         var settings = new RolloutSettings
         {
             Trials = 144,
@@ -1031,7 +1031,7 @@ public class GapFeatureTests
         if (engine == null) return;
 
         // Use a contact position where cube matters
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
 
         var cubeless = engine.RolloutPosition(board, new RolloutSettings
         {
@@ -1061,7 +1061,7 @@ public class GapFeatureTests
         if (engine == null) return;
 
         // Opening position — nobody should resign
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         int level = engine.GetResignation(board);
         Assert.Equal(0, level);
     }
@@ -1088,7 +1088,7 @@ public class GapFeatureTests
         using var engine = CreateEngine();
         if (engine == null) return;
 
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         var result = engine.GetResignEquities(board, 1);
 
         Assert.Equal(1, result.RecommendedLevel);
@@ -1106,7 +1106,7 @@ public class GapFeatureTests
         using var engine = CreateEngine();
         if (engine == null) return;
 
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         int accepted = engine.CheckResignation(board, 1);
         // Should reject resignation in a nearly even position
         Assert.Equal(0, accepted);
@@ -1190,7 +1190,7 @@ public class GapFeatureTests
     [Fact]
     public void DrawBoard_Opening_ProducesValidAscii()
     {
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         string display = BoardDisplay.DrawBoard(board, true);
 
         Assert.False(string.IsNullOrWhiteSpace(display));
@@ -1205,7 +1205,7 @@ public class GapFeatureTests
     [Fact]
     public void DrawBoard_Clockwise_ProducesValidAscii()
     {
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         string display = BoardDisplay.DrawBoard(board, true, clockwise: true);
 
         Assert.False(string.IsNullOrWhiteSpace(display));
@@ -1217,7 +1217,7 @@ public class GapFeatureTests
     [Fact]
     public void FIBSBoard_ProducesColonSeparated()
     {
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         string fibs = BoardDisplay.FIBSBoard(board, true, "player", "opponent",
             0, 0, 0, 3, 1, 1, -1, false);
 
@@ -1241,7 +1241,7 @@ public class GapFeatureTests
     [Fact]
     public void ExtractFeatures_Returns248Floats()
     {
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         float[] features = Engine.ExtractFeatures(board);
 
         Assert.Equal(FeatureExtractor.FeatureDim, features.Length);
@@ -1251,7 +1251,7 @@ public class GapFeatureTests
     [Fact]
     public void ExtractFeatures_NotAllZero()
     {
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         float[] features = Engine.ExtractFeatures(board);
 
         // Opening position should produce non-trivial features
@@ -1289,7 +1289,7 @@ public class GapFeatureTests
     public void ExtractFeatures_ByPositionId_MatchesByBoard()
     {
         string posId = "4HPwATDgc/ABMA";
-        var board = PositionId.Decode(posId)!;
+        var board = PositionId.Decode(posId)!.Value;
 
         float[] fromBoard = Engine.ExtractFeatures(board);
         float[] fromId = Engine.ExtractFeatures(posId);
@@ -1306,7 +1306,7 @@ public class GapFeatureTests
         if (engine == null) return;
 
         // Opening position is Contact class
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         float[] inputs = engine.ExtractRawInputs(board);
 
         // Contact inputs should be 250
@@ -1316,7 +1316,7 @@ public class GapFeatureTests
     [Fact]
     public void ExtractFeatures_Span_ThrowsOnSmallSpan()
     {
-        var board = PositionId.Decode("4HPwATDgc/ABMA")!;
+        var board = PositionId.Decode("4HPwATDgc/ABMA")!.Value;
         Span<float> small = stackalloc float[100];
         Assert.Throws<ArgumentException>(() =>
         {

@@ -19,8 +19,8 @@ public class BfsEvaluatorBenchmarks
 {
     private Evaluator _original = null!;
     private BreadthFirstEvaluator _bfs = null!;
-    private Board _contactBoard = null!;
-    private Board _openingBoard = null!;
+    private Board _contactBoard;
+    private Board _openingBoard;
 
     [GlobalSetup]
     public void Setup()

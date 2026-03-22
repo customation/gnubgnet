@@ -2,46 +2,68 @@
 // Copyright (C) 2000-2014 the AUTHORS
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+
 namespace GnuBgNet;
 
 /// <summary>
-/// Backgammon board representation. Two arrays of 25 unsigned ints each:
+/// 25 checker counts stored inline (no heap array).
+/// Matches C's unsigned int anBoard[25].
+/// </summary>
+[InlineArray(25)]
+public struct BoardSide : IEquatable<BoardSide>
+{
+    private uint _element0;
+
+    /// <summary>Get a Span over all 25 elements.</summary>
+    public Span<uint> AsSpan() =>
+        MemoryMarshal.CreateSpan(ref _element0, 25);
+
+    /// <summary>Get a ReadOnlySpan over all 25 elements.</summary>
+    public readonly ReadOnlySpan<uint> AsReadOnlySpan() =>
+        MemoryMarshal.CreateReadOnlySpan(
+            ref Unsafe.AsRef(in _element0), 25);
+
+    public readonly bool Equals(BoardSide other) =>
+        AsReadOnlySpan().SequenceEqual(other.AsReadOnlySpan());
+
+    public override readonly bool Equals(object? obj) =>
+        obj is BoardSide other && Equals(other);
+
+    public override readonly int GetHashCode()
+    {
+        var hc = new HashCode();
+        foreach (uint v in AsReadOnlySpan())
+            hc.Add(v);
+        return hc.ToHashCode();
+    }
+}
+
+/// <summary>
+/// Backgammon board representation as a value type.
+/// Two inline arrays of 25 unsigned ints each:
 /// points 0-23 are board points, index 24 is the bar.
 /// Player = anBoard[1] in C (on-roll), Opponent = anBoard[0] in C.
+/// Matches C's TanBoard (unsigned int[2][25]) — lives on the stack.
 /// </summary>
-public sealed class Board
+public struct Board : IEquatable<Board>
 {
     /// <summary>Checker counts for the player on roll (anBoard[1] in C). Index 24 = bar.</summary>
-    public readonly uint[] Player = new uint[Constants.NumPoints];
+    public BoardSide Player;
 
     /// <summary>Checker counts for the opponent (anBoard[0] in C). Index 24 = bar.</summary>
-    public readonly uint[] Opponent = new uint[Constants.NumPoints];
+    public BoardSide Opponent;
 
-    public Board()
+    public Board(ReadOnlySpan<uint> player, ReadOnlySpan<uint> opponent)
     {
+        player.CopyTo(Player.AsSpan());
+        opponent.CopyTo(Opponent.AsSpan());
     }
 
-    public Board(uint[] player, uint[] opponent)
-    {
-        ArgumentNullException.ThrowIfNull(player);
-        ArgumentNullException.ThrowIfNull(opponent);
-        if (player.Length != Constants.NumPoints)
-            throw new ArgumentException("Player array must have 25 elements.", nameof(player));
-        if (opponent.Length != Constants.NumPoints)
-            throw new ArgumentException("Opponent array must have 25 elements.", nameof(opponent));
-
-        Array.Copy(player, Player, Constants.NumPoints);
-        Array.Copy(opponent, Opponent, Constants.NumPoints);
-    }
-
-    /// <summary>Creates a deep copy of this board.</summary>
-    public Board Clone()
-    {
-        var b = new Board();
-        Array.Copy(Player, b.Player, Constants.NumPoints);
-        Array.Copy(Opponent, b.Opponent, Constants.NumPoints);
-        return b;
-    }
+    /// <summary>Creates a deep copy of this board. With struct, this is just assignment.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly Board Clone() => this;
 
     /// <summary>Swaps player and opponent (equivalent to SwapSides in C).</summary>
     public void SwapSides()
@@ -53,11 +75,14 @@ public sealed class Board
     }
 
     /// <summary>Returns a new board with sides swapped.</summary>
-    public Board Swapped()
+    public readonly Board Swapped()
     {
         var b = new Board();
-        Array.Copy(Opponent, b.Player, Constants.NumPoints);
-        Array.Copy(Player, b.Opponent, Constants.NumPoints);
+        for (int i = 0; i < Constants.NumPoints; i++)
+        {
+            b.Player[i] = Opponent[i];
+            b.Opponent[i] = Player[i];
+        }
         return b;
     }
 
@@ -65,8 +90,6 @@ public sealed class Board
     public static Board Opening()
     {
         var b = new Board();
-        // Standard starting position. Index = point - 1 (0-based).
-        // Each player: 2 on 24-pt (idx 23), 5 on 13-pt (idx 12), 3 on 8-pt (idx 7), 5 on 6-pt (idx 5)
         b.Player[5] = 5;
         b.Player[7] = 3;
         b.Player[12] = 5;
@@ -79,15 +102,20 @@ public sealed class Board
         return b;
     }
 
-    public bool Equals(Board other)
-    {
-        for (int i = 0; i < Constants.NumPoints; i++)
-        {
-            if (Player[i] != other.Player[i] || Opponent[i] != other.Opponent[i])
-                return false;
-        }
-        return true;
-    }
+    public readonly bool Equals(in Board other) =>
+        Player.Equals(other.Player) && Opponent.Equals(other.Opponent);
+
+    public readonly bool Equals(Board other) =>
+        Player.Equals(other.Player) && Opponent.Equals(other.Opponent);
+
+    public override readonly bool Equals(object? obj) =>
+        obj is Board other && Equals(other);
+
+    public override readonly int GetHashCode() =>
+        HashCode.Combine(Player.GetHashCode(), Opponent.GetHashCode());
+
+    public static bool operator ==(Board left, Board right) => left.Equals(right);
+    public static bool operator !=(Board left, Board right) => !left.Equals(right);
 }
 
 /// <summary>

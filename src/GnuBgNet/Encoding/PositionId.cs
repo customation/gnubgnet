@@ -43,12 +43,12 @@ public static class PositionId
     {
         var board = new Board();
 
-        Unpack8(key.D0, board.Player, 0);
-        Unpack8(key.D1, board.Player, 8);
-        Unpack8(key.D2, board.Player, 16);
-        Unpack8(key.D3, board.Opponent, 0);
-        Unpack8(key.D4, board.Opponent, 8);
-        Unpack8(key.D5, board.Opponent, 16);
+        Unpack8(key.D0, ref board.Player, 0);
+        Unpack8(key.D1, ref board.Player, 8);
+        Unpack8(key.D2, ref board.Player, 16);
+        Unpack8(key.D3, ref board.Opponent, 0);
+        Unpack8(key.D4, ref board.Opponent, 8);
+        Unpack8(key.D5, ref board.Opponent, 16);
         board.Opponent[24] = key.D6 & 0x0Fu;
         board.Player[24] = (key.D6 >> 4) & 0x0Fu;
 
@@ -62,23 +62,23 @@ public static class PositionId
     public static Board FromKeySwapped(PositionKey key)
     {
         var board = new Board();
-        FromKeySwappedInto(key, board);
+        FromKeySwappedInto(key, ref board);
         return board;
     }
 
     /// <summary>
     /// Reconstruct a board from key into an existing board (zero-alloc).
     /// </summary>
-    public static void FromKeyInto(PositionKey key, Board board)
+    public static void FromKeyInto(PositionKey key, ref Board board)
     {
-        Array.Clear(board.Player);
-        Array.Clear(board.Opponent);
-        Unpack8(key.D0, board.Player, 0);
-        Unpack8(key.D1, board.Player, 8);
-        Unpack8(key.D2, board.Player, 16);
-        Unpack8(key.D3, board.Opponent, 0);
-        Unpack8(key.D4, board.Opponent, 8);
-        Unpack8(key.D5, board.Opponent, 16);
+        board.Player.AsSpan().Clear();
+        board.Opponent.AsSpan().Clear();
+        Unpack8(key.D0, ref board.Player, 0);
+        Unpack8(key.D1, ref board.Player, 8);
+        Unpack8(key.D2, ref board.Player, 16);
+        Unpack8(key.D3, ref board.Opponent, 0);
+        Unpack8(key.D4, ref board.Opponent, 8);
+        Unpack8(key.D5, ref board.Opponent, 16);
         board.Opponent[24] = key.D6 & 0x0Fu;
         board.Player[24] = (key.D6 >> 4) & 0x0Fu;
     }
@@ -86,16 +86,16 @@ public static class PositionId
     /// <summary>
     /// Reconstruct a board from key with sides swapped into an existing board (zero-alloc).
     /// </summary>
-    public static void FromKeySwappedInto(PositionKey key, Board board)
+    public static void FromKeySwappedInto(PositionKey key, ref Board board)
     {
-        Array.Clear(board.Player);
-        Array.Clear(board.Opponent);
-        Unpack8(key.D0, board.Opponent, 0);
-        Unpack8(key.D1, board.Opponent, 8);
-        Unpack8(key.D2, board.Opponent, 16);
-        Unpack8(key.D3, board.Player, 0);
-        Unpack8(key.D4, board.Player, 8);
-        Unpack8(key.D5, board.Player, 16);
+        board.Player.AsSpan().Clear();
+        board.Opponent.AsSpan().Clear();
+        Unpack8(key.D0, ref board.Opponent, 0);
+        Unpack8(key.D1, ref board.Opponent, 8);
+        Unpack8(key.D2, ref board.Opponent, 16);
+        Unpack8(key.D3, ref board.Player, 0);
+        Unpack8(key.D4, ref board.Player, 8);
+        Unpack8(key.D5, ref board.Player, 16);
         board.Player[24] = key.D6 & 0x0Fu;
         board.Opponent[24] = (key.D6 >> 4) & 0x0Fu;
     }
@@ -159,7 +159,7 @@ public static class PositionId
 
         // Step 2: decode old key into board
         var board = new Board();
-        OldPositionFromKey(board, oldKey);
+        OldPositionFromKey(ref board, oldKey);
 
         // Step 3: validate
         return CheckPosition(board) ? board : null;
@@ -298,7 +298,7 @@ public static class PositionId
             return PositionInv(nID, n - 1, r);
     }
 
-    private static uint Pack8(uint[] arr, int offset)
+    private static uint Pack8(in BoardSide arr, int offset)
     {
         return arr[offset]
             | (arr[offset + 1] << 4)
@@ -310,7 +310,7 @@ public static class PositionId
             | (arr[offset + 7] << 28);
     }
 
-    private static void Unpack8(uint packed, uint[] arr, int offset)
+    private static void Unpack8(uint packed, ref BoardSide arr, int offset)
     {
         arr[offset] = packed & 0x0Fu;
         arr[offset + 1] = (packed >> 4) & 0x0Fu;
@@ -334,7 +334,7 @@ public static class PositionId
         // Encode both sides: first Opponent (anBoard[0]), then Player (anBoard[1])
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
             for (int j = 0; j < Constants.NumPoints; j++)
             {
                 uint nc = b[j];
@@ -378,10 +378,10 @@ public static class PositionId
     /// Decode old-format position key back to a board.
     /// Port of oldPositionFromKey() from positionid.c.
     /// </summary>
-    private static void OldPositionFromKey(Board board, ReadOnlySpan<byte> oldKey)
+    private static void OldPositionFromKey(ref Board board, ReadOnlySpan<byte> oldKey)
     {
-        Array.Clear(board.Opponent);
-        Array.Clear(board.Player);
+        board.Opponent.AsSpan().Clear();
+        board.Player.AsSpan().Clear();
 
         int side = 0; // 0 = Opponent, 1 = Player
         int point = 0;

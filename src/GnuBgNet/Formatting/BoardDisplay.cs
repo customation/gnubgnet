@@ -54,8 +54,8 @@ public static class BoardDisplay
         var sb = new StringBuilder(1024);
 
         // anBoard[0] = Opponent, anBoard[1] = Player (X)
-        uint[] opp = board.Opponent; // anBoard[0]
-        uint[] plr = board.Player;   // anBoard[1]
+        ReadOnlySpan<uint> opp = board.Opponent.AsReadOnlySpan(); // anBoard[0]
+        ReadOnlySpan<uint> plr = board.Player.AsReadOnlySpan();   // anBoard[1]
 
         int cOffO = nChequers, cOffX = nChequers;
         for (int x = 0; x < 25; x++)
@@ -240,8 +240,8 @@ public static class BoardDisplay
         var asz = NormalizeAnnotations(annotations);
         var sb = new StringBuilder(1024);
 
-        uint[] opp = board.Opponent; // anBoard[0]
-        uint[] plr = board.Player;   // anBoard[1]
+        ReadOnlySpan<uint> opp = board.Opponent.AsReadOnlySpan(); // anBoard[0]
+        ReadOnlySpan<uint> plr = board.Player.AsReadOnlySpan();   // anBoard[1]
 
         int cOffO = nChequers, cOffX = nChequers;
         for (int x = 0; x < 25; x++)
@@ -433,8 +433,8 @@ public static class BoardDisplay
     {
         var sb = new StringBuilder(256);
 
-        uint[] opp = board.Opponent; // anBoard[0]
-        uint[] plr = board.Player;   // anBoard[1]
+        ReadOnlySpan<uint> opp = board.Opponent.AsReadOnlySpan(); // anBoard[0]
+        ReadOnlySpan<uint> plr = board.Player.AsReadOnlySpan();   // anBoard[1]
 
         // Names and match length/score — colons in names replaced with underscores
         sb.Append("board:");

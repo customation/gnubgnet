@@ -59,11 +59,11 @@ public sealed class SparseInputCalculator : IInputCalculator
         // Clear entire span once (fast memset) — then only write non-zero entries
         arInput.Slice(0, 200).Clear();
 
-        WriteSideInputsSparse(board.Player, arInput, 0);
-        WriteSideInputsSparse(board.Opponent, arInput, 100);
+        WriteSideInputsSparse(board.Player.AsReadOnlySpan(), arInput, 0);
+        WriteSideInputsSparse(board.Opponent.AsReadOnlySpan(), arInput, 100);
     }
 
-    private static void WriteSideInputsSparse(uint[] side, Span<float> arInput, int baseOffset)
+    private static void WriteSideInputsSparse(ReadOnlySpan<uint> side, Span<float> arInput, int baseOffset)
     {
         // Only write features for occupied points (skip empties)
         for (int i = 0; i < 24; i++)

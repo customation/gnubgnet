@@ -423,7 +423,7 @@ public sealed class BreadthFirstEvaluator : IPositionEvaluator
 
     private class BfsNode
     {
-        public Board Board = null!;
+        public Board Board;
         public float[]? Outputs;
         public float DiceWeight;
         public bool IsTerminal;
@@ -432,7 +432,7 @@ public sealed class BreadthFirstEvaluator : IPositionEvaluator
     private class CandidateMove
     {
         public int GroupKey;
-        public Board Board = null!;
+        public Board Board;
         public float DiceWeight;
         public float[]? Outputs;
         public PositionClass PositionClass;

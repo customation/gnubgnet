@@ -10,9 +10,9 @@ namespace GnuBgNet.Benchmarks;
 [MemoryDiagnoser]
 public class InputCalculatorBenchmarks
 {
-    private Board _openingBoard = null!;
-    private Board _contactBoard = null!;
-    private Board _sparseBoard = null!;
+    private Board _openingBoard;
+    private Board _contactBoard;
+    private Board _sparseBoard;
 
     [GlobalSetup]
     public void Setup()

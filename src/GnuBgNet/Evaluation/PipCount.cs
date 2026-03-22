@@ -60,7 +60,7 @@ public static class PipCount
         // side 0 = opponent (anBoard[0]), side 1 = player (anBoard[1])
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
             pn[side] = side == 0 ? opponentPips : playerPips;
             pn[side] += (Math.Max(1, (int)b[0]) - 1) * 2;
             pn[side] += Math.Max(1, (int)b[1]) - 1;
@@ -95,14 +95,14 @@ public static class PipCount
 
         for (int side = 0; side < 2; side++)
         {
-            uint[] b = side == 0 ? board.Opponent : board.Player;
+            ReadOnlySpan<uint> b = side == 0 ? board.Opponent.AsReadOnlySpan() : board.Player.AsReadOnlySpan();
             pn[side] = side == 0 ? opponentPips : playerPips;
             if (menLeft[side] > menLeft[1 - side])
                 pn[side] += menLeft[side] - menLeft[1 - side];
             pn[side] += (Math.Max(2, (int)b[0]) - 2) * 2;
             pn[side] += Math.Max(2, (int)b[1]) - 2;
             pn[side] += Math.Max(3, (int)b[2]) - 3;
-            uint[] oppB = side == 0 ? board.Player : board.Opponent;
+            ReadOnlySpan<uint> oppB = side == 0 ? board.Player.AsReadOnlySpan() : board.Opponent.AsReadOnlySpan();
             for (int x = 3; x < 6; x++)
                 if (b[x] == 0 && oppB[x] != 0)
                     pn[side]++;
