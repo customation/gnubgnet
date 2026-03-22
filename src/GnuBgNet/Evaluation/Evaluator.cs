@@ -27,6 +27,22 @@ public sealed class Evaluator : IPositionEvaluator
     private readonly IMoveGenerator _moveGen;
     private readonly IInputCalculator _inputCalc;
 
+    // Thread-local board pool for hot-path reuse (avoids Board allocation per eval).
+    // Stack-based so nested/recursive calls each get their own board.
+    [ThreadStatic] private static Stack<Board>? t_boardPool;
+
+    private static Board RentBoard()
+    {
+        t_boardPool ??= new Stack<Board>();
+        return t_boardPool.Count > 0 ? t_boardPool.Pop() : new Board();
+    }
+
+    private static void ReturnBoard(Board board)
+    {
+        t_boardPool ??= new Stack<Board>();
+        t_boardPool.Push(board);
+    }
+
     internal IBearoffDatabase? OneSidedBearoff { get; }
     internal IBearoffDatabase? TwoSidedBearoff { get; }
     internal IBearoffDatabase? HypergammonBearoff1 { get; }
@@ -133,6 +149,20 @@ public sealed class Evaluator : IPositionEvaluator
 
             Span<float> variationOutput = stackalloc float[Constants.NumOutputs];
 
+            // Create opponent cubeinfo once (same for all 21 rolls)
+            CubeInfo? ciOpp = ci != null ? new CubeInfo
+            {
+                Cube = ci.Cube,
+                CubeOwner = ci.CubeOwner,
+                Move = 1 - ci.Move,
+                MatchTo = ci.MatchTo,
+                Score = (int[])ci.Score.Clone(),
+                Crawford = ci.Crawford,
+                Jacoby = ci.Jacoby,
+                Beavers = ci.Beavers,
+                Variation = ci.Variation,
+            } : null;
+
             for (int n0 = 1; n0 <= 6; n0++)
             {
                 for (int n1 = 1; n1 <= n0; n1++)
@@ -144,21 +174,6 @@ public sealed class Evaluator : IPositionEvaluator
 
                     // Swap sides and evaluate at n-1 ply
                     newBoard.SwapSides();
-
-                    // Create opponent cubeinfo for recursive evaluation
-                    // Port of SetCubeInfo(&ciOpp, ..., !pci->fMove, ...) from eval.c
-                    CubeInfo? ciOpp = ci != null ? new CubeInfo
-                    {
-                        Cube = ci.Cube,
-                        CubeOwner = ci.CubeOwner,
-                        Move = 1 - ci.Move,
-                        MatchTo = ci.MatchTo,
-                        Score = (int[])ci.Score.Clone(),
-                        Crawford = ci.Crawford,
-                        Jacoby = ci.Jacoby,
-                        Beavers = ci.Beavers,
-                        Variation = ci.Variation,
-                    } : null;
 
                     EvaluatePositionPlied(newBoard, variationOutput, nPlies - 1, usePrune, ec, ciOpp);
 
@@ -311,9 +326,12 @@ public sealed class Evaluator : IPositionEvaluator
     /// </summary>
     internal void ScoreMove(Move move, int nPlies, CubeInfo? ci, bool cubeful)
     {
-        float[] arEval = new float[Constants.NumRolloutOutputs];
-        var moveBoard = PositionId.FromKey(move.Key).Swapped();
+        Span<float> arEval = stackalloc float[Constants.NumRolloutOutputs];
+        var moveBoard = RentBoard();
+        PositionId.FromKeySwappedInto(move.Key, moveBoard);
 
+        try
+        {
         if (cubeful && ci != null)
         {
             // Create opponent-perspective cube info for after the move
@@ -353,7 +371,7 @@ public sealed class Evaluator : IPositionEvaluator
             arEval[Constants.OutputCubefulEquity] = arEval[Constants.OutputEquity];
         }
 
-        Array.Copy(arEval, move.EvalOutputs, Constants.NumRolloutOutputs);
+        arEval.Slice(0, Constants.NumRolloutOutputs).CopyTo(move.EvalOutputs);
 
         move.MoveEvalSetup.Type = EvalType.Eval;
         move.MoveEvalSetup.Context = new EvalContext { Plies = nPlies, Cubeful = cubeful };
@@ -362,6 +380,11 @@ public sealed class Evaluator : IPositionEvaluator
             ? arEval[Constants.OutputCubefulEquity]
             : arEval[Constants.OutputEquity];
         move.Score2 = arEval[Constants.OutputEquity];
+        }
+        finally
+        {
+            ReturnBoard(moveBoard);
+        }
     }
 
     /// <summary>Sort moves by score descending (best first).</summary>
@@ -402,52 +425,61 @@ public sealed class Evaluator : IPositionEvaluator
             Variation = ci.Variation,
         } : null;
 
-        for (int i = 0; i < ml.Moves.Count; i++)
+        var pruneBoard = RentBoard();
+        try
         {
-            var moveBoard = PositionId.FromKey(ml.Moves[i].Key).Swapped();
-            var pc = Classifier.Classify(moveBoard, this);
-
-            if (i == 0)
+            Span<float> pruneInputs = stackalloc float[Constants.NumPruningInputs];
+            for (int i = 0; i < ml.Moves.Count; i++)
             {
-                if (pc < PositionClass.Race)
-                    return false;
-                evalClass = pc;
-            }
-            else if (pc != evalClass)
-                return false;
+                PositionId.FromKeySwappedInto(ml.Moves[i].Key, pruneBoard);
+                var pc = Classifier.Classify(pruneBoard, this);
 
-            var key = ml.Moves[i].Key;
-            uint l = _pruneCache.Lookup(key, 0, arOutput);
-            if (l != EvalCache.CacheHit)
-            {
-                float[] inputs = new float[Constants.NumPruningInputs];
-                _inputCalc.BaseInputs(moveBoard, inputs);
-
-                var net = evalClass switch
+                if (i == 0)
                 {
-                    PositionClass.Race => _nets.PruneRace,
-                    PositionClass.Crashed => _nets.PruneCrashed,
-                    _ => _nets.PruneContact,
-                };
-                net.Evaluate(inputs, arOutput);
+                    if (pc < PositionClass.Race)
+                        return false;
+                    evalClass = pc;
+                }
+                else if (pc != evalClass)
+                    return false;
 
-                // Correct backgammon probabilities for race positions
-                if (evalClass == PositionClass.Race)
-                    EvalRaceBG(moveBoard, arOutput);
+                var key = ml.Moves[i].Key;
+                uint l = _pruneCache.Lookup(key, 0, arOutput);
+                if (l != EvalCache.CacheHit)
+                {
+                    pruneInputs.Clear();
+                    _inputCalc.BaseInputs(pruneBoard, pruneInputs);
 
-                SanityCheck(moveBoard, arOutput);
+                    var net = evalClass switch
+                    {
+                        PositionClass.Race => _nets.PruneRace,
+                        PositionClass.Crashed => _nets.PruneCrashed,
+                        _ => _nets.PruneContact,
+                    };
+                    net.Evaluate(pruneInputs, arOutput);
 
-                _pruneCache.Add(key, 0, arOutput, l);
+                    // Correct backgammon probabilities for race positions
+                    if (evalClass == PositionClass.Race)
+                        EvalRaceBG(pruneBoard, arOutput);
+
+                    SanityCheck(pruneBoard, arOutput);
+
+                    _pruneCache.Add(key, 0, arOutput, l);
+                }
+
+                // Score from opponent's perspective using opponent's gammon prices,
+                // negated so higher = better for us.
+                // The C code (FindBestMoveInEval) flips fMove and keeps moves with the
+                // LOWEST opponent utility; we negate so SelectTopMoves (highest) is correct.
+                ml.Moves[i].Score = -ComputeEquity(arOutput, ciOpp);
             }
 
-            // Score from opponent's perspective using opponent's gammon prices,
-            // negated so higher = better for us.
-            // The C code (FindBestMoveInEval) flips fMove and keeps moves with the
-            // LOWEST opponent utility; we negate so SelectTopMoves (highest) is correct.
-            ml.Moves[i].Score = -ComputeEquity(arOutput, ciOpp);
+            return true;
         }
-
-        return true;
+        finally
+        {
+            ReturnBoard(pruneBoard);
+        }
     }
 
     /// <summary>
@@ -486,11 +518,13 @@ public sealed class Evaluator : IPositionEvaluator
             float bestScore = float.MinValue;
             int bestIdx = 0;
             Span<float> output = stackalloc float[Constants.NumOutputs];
-
+            var scratchBoard = RentBoard();
+            try
+            {
             for (int i = 0; i < candidates.Count; i++)
             {
-                var moveBoard = PositionId.FromKey(candidates[i].Key).Swapped();
-                EvaluatePosition(moveBoard, output);
+                PositionId.FromKeySwappedInto(candidates[i].Key, scratchBoard);
+                EvaluatePosition(scratchBoard, output);
                 InvertEvaluation(output);
 
                 float score = ComputeEquity(output, ci);
@@ -500,6 +534,8 @@ public sealed class Evaluator : IPositionEvaluator
                     bestIdx = i;
                 }
             }
+            }
+            finally { ReturnBoard(scratchBoard); }
 
             return PositionId.FromKey(candidates[bestIdx].Key);
         }
@@ -531,11 +567,13 @@ public sealed class Evaluator : IPositionEvaluator
             float bestScore = float.MinValue;
             int bestIdx = 0;
             Span<float> output = stackalloc float[Constants.NumOutputs];
-
+            var scratchBoard = RentBoard();
+            try
+            {
             for (int i = 0; i < ml.Moves.Count; i++)
             {
-                var moveBoard = PositionId.FromKey(ml.Moves[i].Key).Swapped();
-                EvaluatePosition(moveBoard, output);
+                PositionId.FromKeySwappedInto(ml.Moves[i].Key, scratchBoard);
+                EvaluatePosition(scratchBoard, output);
                 InvertEvaluation(output);
 
                 float score = ComputeEquity(output, ci);
@@ -545,6 +583,8 @@ public sealed class Evaluator : IPositionEvaluator
                     bestIdx = i;
                 }
             }
+            }
+            finally { ReturnBoard(scratchBoard); }
 
             return PositionId.FromKey(ml.Moves[bestIdx].Key);
         }
@@ -730,17 +770,20 @@ public sealed class Evaluator : IPositionEvaluator
 
         // Create dummy board: keep side's pieces, map opponent's last 6 points to first 6
         // In C: dummy[side] = anBoard[side], dummy[1-side][0..5] = anBoard[1-side][18..23], rest = 0
-        var dummy = new Board();
+        var dummy = RentBoard();
+        try
+        {
+        Array.Clear(dummy.Player);
+        Array.Clear(dummy.Opponent);
         uint[] dummyPlayer = side == 1 ? dummy.Player : dummy.Opponent;
         uint[] dummyOpp = side == 1 ? dummy.Opponent : dummy.Player;
 
         Array.Copy(sideBoard, dummyPlayer, 25);
         for (int i = 0; i < 6; ++i)
             dummyOpp[i] = oppBoard[18 + i];
-        // dummyOpp[6..24] already 0
 
         // Evaluate using bearoff
-        float p;
+        float result = 0.0f;
         if (TwoSidedBearoff != null)
         {
             uint pos0 = PositionId.PositionBearoff(dummy.Opponent, TwoSidedBearoff.Points, TwoSidedBearoff.Chequers);
@@ -749,8 +792,9 @@ public sealed class Evaluator : IPositionEvaluator
             {
                 Span<float> ar = stackalloc float[Constants.NumOutputs];
                 TwoSidedBearoff.Evaluate(dummy, ar);
-                p = side == 1 ? ar[Constants.OutputWin] : 1.0f - ar[Constants.OutputWin];
-                return Math.Min(p, 1.0f);
+                float p = side == 1 ? ar[Constants.OutputWin] : 1.0f - ar[Constants.OutputWin];
+                result = Math.Min(p, 1.0f);
+                return result;
             }
         }
 
@@ -758,23 +802,28 @@ public sealed class Evaluator : IPositionEvaluator
         {
             Span<float> ar = stackalloc float[Constants.NumOutputs];
             OneSidedBearoff.Evaluate(dummy, ar);
-            p = side == 1 ? ar[Constants.OutputWin] : 1.0f - ar[Constants.OutputWin];
-            return Math.Min(p, 1.0f);
+            float p = side == 1 ? ar[Constants.OutputWin] : 1.0f - ar[Constants.OutputWin];
+            result = Math.Min(p, 1.0f);
         }
 
-        return 0.0f;
+        return result;
+        }
+        finally
+        {
+            ReturnBoard(dummy);
+        }
     }
 
     private void EvalContact(Board board, Span<float> output)
     {
-        float[] inputs = new float[Constants.NumContactInputs];
+        Span<float> inputs = stackalloc float[Constants.NumContactInputs];
         _inputCalc.CalculateContactInputs(board, inputs);
         _nets.Contact.Evaluate(inputs, output);
     }
 
     private void EvalCrashed(Board board, Span<float> output)
     {
-        float[] inputs = new float[Constants.NumCrashedInputs];
+        Span<float> inputs = stackalloc float[Constants.NumCrashedInputs];
         _inputCalc.CalculateCrashedInputs(board, inputs);
         _nets.Crashed.Evaluate(inputs, output);
     }
@@ -882,10 +931,10 @@ public sealed class Evaluator : IPositionEvaluator
         for (int i = 0; i < Constants.NumOutputs; i++)
             output[i] = Math.Clamp(output[i], 0.0f, 1.0f);
 
-        int[] ac = new int[2];
-        int[] anBack = new int[2];
-        int[] anCross = new int[2];
-        int[] anGammonCross = [1, 1];
+        Span<int> ac = stackalloc int[2];
+        Span<int> anBack = stackalloc int[2];
+        Span<int> anCross = stackalloc int[2];
+        Span<int> anGammonCross = stackalloc int[] { 1, 1 };
 
         for (int side = 0; side < 2; side++)
         {
@@ -927,7 +976,7 @@ public sealed class Evaluator : IPositionEvaluator
 
         bool fContact = anBack[0] + anBack[1] >= 24;
 
-        int[] anMaxTurns = new int[2];
+        Span<int> anMaxTurns = stackalloc int[2];
         if (!fContact)
         {
             for (int i = 0; i < 2; i++)

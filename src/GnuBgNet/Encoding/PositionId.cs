@@ -62,8 +62,34 @@ public static class PositionId
     public static Board FromKeySwapped(PositionKey key)
     {
         var board = new Board();
+        FromKeySwappedInto(key, board);
+        return board;
+    }
 
-        // Swapped: anBoard[0] gets anpBoard[0..2], anBoard[1] gets anpBoard[3..5]
+    /// <summary>
+    /// Reconstruct a board from key into an existing board (zero-alloc).
+    /// </summary>
+    public static void FromKeyInto(PositionKey key, Board board)
+    {
+        Array.Clear(board.Player);
+        Array.Clear(board.Opponent);
+        Unpack8(key.D0, board.Player, 0);
+        Unpack8(key.D1, board.Player, 8);
+        Unpack8(key.D2, board.Player, 16);
+        Unpack8(key.D3, board.Opponent, 0);
+        Unpack8(key.D4, board.Opponent, 8);
+        Unpack8(key.D5, board.Opponent, 16);
+        board.Opponent[24] = key.D6 & 0x0Fu;
+        board.Player[24] = (key.D6 >> 4) & 0x0Fu;
+    }
+
+    /// <summary>
+    /// Reconstruct a board from key with sides swapped into an existing board (zero-alloc).
+    /// </summary>
+    public static void FromKeySwappedInto(PositionKey key, Board board)
+    {
+        Array.Clear(board.Player);
+        Array.Clear(board.Opponent);
         Unpack8(key.D0, board.Opponent, 0);
         Unpack8(key.D1, board.Opponent, 8);
         Unpack8(key.D2, board.Opponent, 16);
@@ -72,8 +98,6 @@ public static class PositionId
         Unpack8(key.D5, board.Player, 16);
         board.Player[24] = key.D6 & 0x0Fu;
         board.Opponent[24] = (key.D6 >> 4) & 0x0Fu;
-
-        return board;
     }
 
     /// <summary>
