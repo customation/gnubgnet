@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Ported from neuralnet.c
 
-using System.Numerics;
+using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 
 namespace GnuBgNet.NeuralNet;
@@ -11,6 +11,7 @@ namespace GnuBgNet.NeuralNet;
 /// <summary>
 /// A 3-layer feedforward neural network: input → hidden (sigmoid) → output (sigmoid).
 /// Port of the neuralnet struct and evaluation functions from neuralnet.c.
+/// Uses TensorPrimitives for vectorized accumulation (auto-selects best SIMD width).
 /// </summary>
 public sealed class NeuralNetwork : INeuralNetwork
 {
@@ -99,7 +100,7 @@ public sealed class NeuralNetwork : INeuralNetwork
         // Initialize hidden layer from thresholds
         HiddenThreshold.AsSpan(0, cHidden).CopyTo(hidden);
 
-        // Accumulate input * weights into hidden layer
+        // Accumulate input * weights into hidden layer using TensorPrimitives
         int weightOffset = 0;
         for (int i = 0; i < InputCount; i++)
         {
@@ -108,14 +109,17 @@ public sealed class NeuralNetwork : INeuralNetwork
             {
                 weightOffset += cHidden;
             }
-            else if (ari == 1.0f)
-            {
-                AccumulateWeightsAdd(hidden, HiddenWeight.AsSpan(weightOffset, cHidden));
-                weightOffset += cHidden;
-            }
             else
             {
-                AccumulateWeightsMul(hidden, HiddenWeight.AsSpan(weightOffset, cHidden), ari);
+                var weights = HiddenWeight.AsSpan(weightOffset, cHidden);
+                if (ari == 1.0f)
+                {
+                    TensorPrimitives.Add(hidden, weights, hidden);
+                }
+                else
+                {
+                    TensorPrimitives.MultiplyAdd(weights, ari, hidden, hidden);
+                }
                 weightOffset += cHidden;
             }
         }
@@ -148,19 +152,21 @@ public sealed class NeuralNetwork : INeuralNetwork
             {
                 weightOffset += cHidden;
             }
-            else if (ari == 1.0f)
-            {
-                AccumulateWeightsAdd(hidden, HiddenWeight.AsSpan(weightOffset, cHidden));
-                weightOffset += cHidden;
-            }
-            else if (ari == -1.0f)
-            {
-                AccumulateWeightsSub(hidden, HiddenWeight.AsSpan(weightOffset, cHidden));
-                weightOffset += cHidden;
-            }
             else
             {
-                AccumulateWeightsMul(hidden, HiddenWeight.AsSpan(weightOffset, cHidden), ari);
+                var weights = HiddenWeight.AsSpan(weightOffset, cHidden);
+                if (ari == 1.0f)
+                {
+                    TensorPrimitives.Add(hidden, weights, hidden);
+                }
+                else if (ari == -1.0f)
+                {
+                    TensorPrimitives.Subtract(hidden, weights, hidden);
+                }
+                else
+                {
+                    TensorPrimitives.MultiplyAdd(weights, ari, hidden, hidden);
+                }
                 weightOffset += cHidden;
             }
         }
@@ -179,66 +185,10 @@ public sealed class NeuralNetwork : INeuralNetwork
 
         for (int i = 0; i < OutputCount; i++)
         {
-            float r = OutputThreshold[i];
-            for (int j = 0; j < cHidden; j++)
-                r += hidden[j] * OutputWeight[weightOffset + j];
+            float r = OutputThreshold[i] +
+                TensorPrimitives.Dot(hidden, OutputWeight.AsSpan(weightOffset, cHidden));
             output[i] = Sigmoid.Evaluate(-BetaOutput * r);
             weightOffset += cHidden;
         }
-    }
-
-    /// <summary>hidden[j] += weights[j] using SIMD.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void AccumulateWeightsAdd(Span<float> hidden, ReadOnlySpan<float> weights)
-    {
-        int vecSize = Vector<float>.Count;
-        int i = 0;
-
-        for (; i + vecSize <= hidden.Length; i += vecSize)
-        {
-            var h = new Vector<float>(hidden.Slice(i, vecSize));
-            var w = new Vector<float>(weights.Slice(i, vecSize));
-            (h + w).CopyTo(hidden.Slice(i, vecSize));
-        }
-
-        for (; i < hidden.Length; i++)
-            hidden[i] += weights[i];
-    }
-
-    /// <summary>hidden[j] -= weights[j] using SIMD.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void AccumulateWeightsSub(Span<float> hidden, ReadOnlySpan<float> weights)
-    {
-        int vecSize = Vector<float>.Count;
-        int i = 0;
-
-        for (; i + vecSize <= hidden.Length; i += vecSize)
-        {
-            var h = new Vector<float>(hidden.Slice(i, vecSize));
-            var w = new Vector<float>(weights.Slice(i, vecSize));
-            (h - w).CopyTo(hidden.Slice(i, vecSize));
-        }
-
-        for (; i < hidden.Length; i++)
-            hidden[i] -= weights[i];
-    }
-
-    /// <summary>hidden[j] += weights[j] * scalar using SIMD.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void AccumulateWeightsMul(Span<float> hidden, ReadOnlySpan<float> weights, float scalar)
-    {
-        int vecSize = Vector<float>.Count;
-        var vScalar = new Vector<float>(scalar);
-        int i = 0;
-
-        for (; i + vecSize <= hidden.Length; i += vecSize)
-        {
-            var h = new Vector<float>(hidden.Slice(i, vecSize));
-            var w = new Vector<float>(weights.Slice(i, vecSize));
-            (h + w * vScalar).CopyTo(hidden.Slice(i, vecSize));
-        }
-
-        for (; i < hidden.Length; i++)
-            hidden[i] += weights[i] * scalar;
     }
 }

@@ -14,4 +14,8 @@
     <InternalsVisibleTo Include="GnuBgNet.Benchmarks" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.Numerics.Tensors" Version="10.0.5" />
+  </ItemGroup>
+
 </Project>
