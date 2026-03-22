@@ -51,9 +51,7 @@ public sealed class NeuralNetwork : INeuralNetwork
     {
         var action = state?.GetAction() ?? NNEvalType.None;
 
-        // Allocate hidden layer on stack if small enough, otherwise rent
-        float[] hiddenBuf = new float[HiddenCount];
-        Span<float> hidden = hiddenBuf;
+        Span<float> hidden = stackalloc float[HiddenCount];
 
         switch (action)
         {
@@ -76,16 +74,16 @@ public sealed class NeuralNetwork : INeuralNetwork
                 // Copy saved base and compute difference
                 state.SavedBase.AsSpan(0, HiddenCount).CopyTo(hidden);
 
-                // Compute input diff in-place (reuse a temp buffer)
-                float[] diffBuf = new float[InputCount];
+                // Compute input diff in-place on stack
+                Span<float> diff = stackalloc float[InputCount];
                 for (int i = 0; i < InputCount; i++)
                 {
                     float curr = input[i];
                     float saved = state.SavedIBase![i];
-                    diffBuf[i] = (curr != saved) ? curr - saved : 0.0f;
+                    diff[i] = (curr != saved) ? curr - saved : 0.0f;
                 }
 
-                ComputFromBase(diffBuf, hidden, output);
+                ComputFromBase(diff, hidden, output);
                 break;
         }
     }

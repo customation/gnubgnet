@@ -169,7 +169,7 @@ public sealed class Evaluator : IPositionEvaluator
                 {
                     float w = (n0 == n1) ? 1.0f : 2.0f;
 
-                    // Find best move for this roll, using cubeinfo for scoring
+                    // Find best move for this roll
                     var newBoard = FindBestMoveForRoll(board, n0, n1, usePrune, ci);
 
                     // Swap sides and evaluate at n-1 ply
@@ -229,11 +229,11 @@ public sealed class Evaluator : IPositionEvaluator
             if (TryScoreWithPruningNets(ml, board, ci))
             {
                 var candidates = SelectTopMoves(ml, pruneMoves);
-                return ScoreCandidatesAndGetBest(candidates, ci, cubeful);
+                return PositionId.FromKey(FindBestKeyFromCandidates(candidates, ci, cubeful));
             }
         }
 
-        return ScoreAllMovesAndGetBest(ml, ci, cubeful);
+        return PositionId.FromKey(FindBestKeyFromAll(ml, ci, cubeful));
     }
 
     /// <summary>
@@ -493,10 +493,10 @@ public sealed class Evaluator : IPositionEvaluator
     }
 
     /// <summary>
-    /// Score a set of candidate moves at 0-ply and return the board for the best one.
+    /// Score a set of candidate moves at 0-ply and return the key for the best one.
     /// When cubeful=true, uses full cubeful evaluation matching C's ScoreMovesPruned.
     /// </summary>
-    private Board ScoreCandidatesAndGetBest(List<Move> candidates, CubeInfo? ci = null, bool cubeful = false)
+    private PositionKey FindBestKeyFromCandidates(List<Move> candidates, CubeInfo? ci = null, bool cubeful = false)
     {
         if (cubeful && ci != null)
         {
@@ -511,7 +511,7 @@ public sealed class Evaluator : IPositionEvaluator
                     bestIdx = i;
                 }
             }
-            return PositionId.FromKey(candidates[bestIdx].Key);
+            return candidates[bestIdx].Key;
         }
 
         {
@@ -521,31 +521,31 @@ public sealed class Evaluator : IPositionEvaluator
             var scratchBoard = RentBoard();
             try
             {
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                PositionId.FromKeySwappedInto(candidates[i].Key, scratchBoard);
-                EvaluatePosition(scratchBoard, output);
-                InvertEvaluation(output);
-
-                float score = ComputeEquity(output, ci);
-                if (score > bestScore)
+                for (int i = 0; i < candidates.Count; i++)
                 {
-                    bestScore = score;
-                    bestIdx = i;
+                    PositionId.FromKeySwappedInto(candidates[i].Key, scratchBoard);
+                    EvaluatePosition(scratchBoard, output);
+                    InvertEvaluation(output);
+
+                    float score = ComputeEquity(output, ci);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestIdx = i;
+                    }
                 }
-            }
             }
             finally { ReturnBoard(scratchBoard); }
 
-            return PositionId.FromKey(candidates[bestIdx].Key);
+            return candidates[bestIdx].Key;
         }
     }
 
     /// <summary>
-    /// Score all moves at 0-ply and return the board for the best one.
+    /// Score all moves at 0-ply and return the key for the best one.
     /// When cubeful=true, uses full cubeful evaluation matching C's ScoreMoves.
     /// </summary>
-    private Board ScoreAllMovesAndGetBest(MoveList ml, CubeInfo? ci = null, bool cubeful = false)
+    private PositionKey FindBestKeyFromAll(MoveList ml, CubeInfo? ci = null, bool cubeful = false)
     {
         if (cubeful && ci != null)
         {
@@ -560,7 +560,7 @@ public sealed class Evaluator : IPositionEvaluator
                     bestIdx = i;
                 }
             }
-            return PositionId.FromKey(ml.Moves[bestIdx].Key);
+            return ml.Moves[bestIdx].Key;
         }
 
         {
@@ -570,23 +570,23 @@ public sealed class Evaluator : IPositionEvaluator
             var scratchBoard = RentBoard();
             try
             {
-            for (int i = 0; i < ml.Moves.Count; i++)
-            {
-                PositionId.FromKeySwappedInto(ml.Moves[i].Key, scratchBoard);
-                EvaluatePosition(scratchBoard, output);
-                InvertEvaluation(output);
-
-                float score = ComputeEquity(output, ci);
-                if (score > bestScore)
+                for (int i = 0; i < ml.Moves.Count; i++)
                 {
-                    bestScore = score;
-                    bestIdx = i;
+                    PositionId.FromKeySwappedInto(ml.Moves[i].Key, scratchBoard);
+                    EvaluatePosition(scratchBoard, output);
+                    InvertEvaluation(output);
+
+                    float score = ComputeEquity(output, ci);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestIdx = i;
+                    }
                 }
-            }
             }
             finally { ReturnBoard(scratchBoard); }
 
-            return PositionId.FromKey(ml.Moves[bestIdx].Key);
+            return ml.Moves[bestIdx].Key;
         }
     }
 
@@ -1158,7 +1158,7 @@ public sealed class Evaluator : IPositionEvaluator
         EvalContext ec, int nPlies, bool fTop)
     {
         // For simplicity, skip cache for now and go directly to evaluation
-        float[] arCubeful = new float[cci];
+        Span<float> arCubeful = stackalloc float[cci];
         EvaluatePositionCubeful4(board, arOutput, arCubeful,
             aciCubePos, cci, pciMove, ec, nPlies, fTop);
         cubeful = arCubeful[0];
@@ -1168,7 +1168,7 @@ public sealed class Evaluator : IPositionEvaluator
     /// Cubeful evaluation with caching (multi-cube-position version).
     /// </summary>
     internal void EvaluatePositionCubeful3Multi(
-        Board board, Span<float> arOutput, float[] arCubeful,
+        Board board, Span<float> arOutput, Span<float> arCubeful,
         CubeInfo[] aciCubePos, int cci, CubeInfo pciMove,
         EvalContext ec, int nPlies, bool fTop)
     {
@@ -1223,19 +1223,19 @@ public sealed class Evaluator : IPositionEvaluator
     /// Port of EvaluatePositionCubeful4() from eval.c.
     /// </summary>
     internal void EvaluatePositionCubeful4(
-        Board board, Span<float> arOutput, float[] arCubeful,
+        Board board, Span<float> arOutput, Span<float> arCubeful,
         CubeInfo[] aciCubePos, int cci, CubeInfo pciMove,
         EvalContext ec, int nPlies, bool fTop)
     {
         var pc = Classifier.Classify(board, this);
-        float[] arCf = new float[2 * cci];
+        Span<float> arCf = stackalloc float[2 * cci];
         CubeInfo[] aci = new CubeInfo[2 * cci];
 
         if (pc > PositionClass.BearoffTwoSided && nPlies > 0)
         {
             // Internal node: recurse over all 21 dice rolls
-            float[] ar = new float[Constants.NumOutputs];
-            float[] arCfTemp = new float[2 * cci];
+            Span<float> ar = stackalloc float[Constants.NumOutputs];
+            Span<float> arCfTemp = stackalloc float[2 * cci];
 
             for (int i = 0; i < Constants.NumOutputs; i++)
                 arOutput[i] = 0.0f;
@@ -1247,29 +1247,29 @@ public sealed class Evaluator : IPositionEvaluator
 
             bool usePrune = ec.UsePrune && ec.Noise == 0.0f;
 
+            // Create opponent cube info once (same for all 21 rolls)
+            var ciMoveOpp = new CubeInfo
+            {
+                Cube = pciMove.Cube,
+                CubeOwner = pciMove.CubeOwner,
+                Move = 1 - pciMove.Move,
+                MatchTo = pciMove.MatchTo,
+                Score = (int[])pciMove.Score.Clone(),
+                Crawford = pciMove.Crawford,
+                Jacoby = pciMove.Jacoby,
+                Beavers = pciMove.Beavers,
+                Variation = pciMove.Variation,
+            };
+
             for (int n0 = 1; n0 <= 6; n0++)
             {
                 for (int n1 = 1; n1 <= n0; n1++)
                 {
                     float w = (n0 == n1) ? 1.0f : 2.0f;
 
-                    // Find best move with cubeful scoring, matching C's ScoreMove(fCubeful=1)
+                    // Find best move with cubeful scoring
                     var newBoard = FindBestMoveForRoll(board, n0, n1, usePrune, pciMove, cubeful: true);
                     newBoard.SwapSides();
-
-                    // Set up opponent's cube info
-                    var ciMoveOpp = new CubeInfo
-                    {
-                        Cube = pciMove.Cube,
-                        CubeOwner = pciMove.CubeOwner,
-                        Move = 1 - pciMove.Move,
-                        MatchTo = pciMove.MatchTo,
-                        Score = (int[])pciMove.Score.Clone(),
-                        Crawford = pciMove.Crawford,
-                        Jacoby = pciMove.Jacoby,
-                        Beavers = pciMove.Beavers,
-                        Variation = pciMove.Variation,
-                    };
 
                     // Evaluate recursively
                     EvaluatePositionCubeful4(newBoard, ar, arCfTemp,
@@ -1451,7 +1451,7 @@ public sealed class Evaluator : IPositionEvaluator
     /// Select best cube action from recursive cubeful equity results.
     /// Port of GetECF3() from eval.c.
     /// </summary>
-    internal static void GetEcf3(float[] arCubeful, int cci, float[] arCf, CubeInfo[] aci,
+    internal static void GetEcf3(Span<float> arCubeful, int cci, Span<float> arCf, CubeInfo[] aci,
         IMatchEquityTable met)
     {
         for (int ici = 0, i = 0; ici < cci; ici++, i += 2)
