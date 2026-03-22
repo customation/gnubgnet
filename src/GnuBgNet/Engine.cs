@@ -70,6 +70,24 @@ public sealed class Engine : IDisposable
     }
 
     /// <summary>
+    /// Create an engine instance with custom neural networks and components.
+    /// </summary>
+    public static Engine Create(string dataDir, NetworkSet nets,
+        IMoveGenerator? moveGenerator = null, IInputCalculator? inputCalculator = null,
+        IEvalCache? mainCache = null, IEvalCache? pruneCache = null)
+    {
+        var (os, ts, h1, h2, h3) = LoadBearoffDatabases(dataDir);
+
+        var metXmlPath = Path.Combine(dataDir, "met", "Kazaross-XG2.xml");
+        var met = File.Exists(metXmlPath)
+            ? MetXmlLoader.LoadFromFile(metXmlPath)
+            : MatchEquityTable.ComputeDefault();
+
+        return new Engine(nets, os, ts, h1, h2, h3, met, mainCache, pruneCache,
+            moveGenerator, inputCalculator);
+    }
+
+    /// <summary>
     /// Create an engine instance with a custom match equity table loaded from an XML file.
     /// </summary>
     public static Engine Create(string dataDir, string metXmlPath)
