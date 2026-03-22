@@ -59,6 +59,105 @@ public static class InputCalculator
     private const int RI_NCROSS = 106;
     private const int HalfRaceInputs = 107;
 
+    // Static lookup tables for CalculateHalfInputs — these are const in C's eval.c.
+    // aanCombination[n] - ways to hit from distance n+1
+    private static readonly int[][] AanCombination =
+    [
+        [0, -1, -1, -1, -1],    /*  1 */
+        [1, 2, -1, -1, -1],     /*  2 */
+        [3, 4, 5, -1, -1],      /*  3 */
+        [6, 7, 8, 9, -1],       /*  4 */
+        [10, 11, 12, -1, -1],   /*  5 */
+        [13, 14, 15, 16, 17],   /*  6 */
+        [18, 19, 20, -1, -1],   /*  7 */
+        [21, 22, 23, 24, -1],   /*  8 */
+        [25, 26, 27, -1, -1],   /*  9 */
+        [28, 29, -1, -1, -1],   /* 10 */
+        [30, -1, -1, -1, -1],   /* 11 */
+        [31, 32, 33, -1, -1],   /* 12 */
+        [-1, -1, -1, -1, -1],   /* 13 */
+        [-1, -1, -1, -1, -1],   /* 14 */
+        [34, -1, -1, -1, -1],   /* 15 */
+        [35, -1, -1, -1, -1],   /* 16 */
+        [-1, -1, -1, -1, -1],   /* 17 */
+        [36, -1, -1, -1, -1],   /* 18 */
+        [-1, -1, -1, -1, -1],   /* 19 */
+        [37, -1, -1, -1, -1],   /* 20 */
+        [-1, -1, -1, -1, -1],   /* 21 */
+        [-1, -1, -1, -1, -1],   /* 22 */
+        [-1, -1, -1, -1, -1],   /* 23 */
+        [38, -1, -1, -1, -1],   /* 24 */
+    ];
+
+    // aIntermediate: [fAll, inter0, inter1, inter2, nFaces, nPips]
+    private static readonly (bool fAll, int[] inter, int nFaces, int nPips)[] AIntermediate =
+    [
+        (true,  [0, 0, 0], 1, 1),   /*  0: 1x hits 1 */
+        (true,  [0, 0, 0], 1, 2),   /*  1: 2x hits 2 */
+        (true,  [1, 0, 0], 2, 2),   /*  2: 11 hits 2 */
+        (true,  [0, 0, 0], 1, 3),   /*  3: 3x hits 3 */
+        (false, [1, 2, 0], 2, 3),   /*  4: 21 hits 3 */
+        (true,  [1, 2, 0], 3, 3),   /*  5: 11 hits 3 */
+        (true,  [0, 0, 0], 1, 4),   /*  6: 4x hits 4 */
+        (false, [1, 3, 0], 2, 4),   /*  7: 31 hits 4 */
+        (true,  [2, 0, 0], 2, 4),   /*  8: 22 hits 4 */
+        (true,  [1, 2, 3], 4, 4),   /*  9: 11 hits 4 */
+        (true,  [0, 0, 0], 1, 5),   /* 10: 5x hits 5 */
+        (false, [1, 4, 0], 2, 5),   /* 11: 41 hits 5 */
+        (false, [2, 3, 0], 2, 5),   /* 12: 32 hits 5 */
+        (true,  [0, 0, 0], 1, 6),   /* 13: 6x hits 6 */
+        (false, [1, 5, 0], 2, 6),   /* 14: 51 hits 6 */
+        (false, [2, 4, 0], 2, 6),   /* 15: 42 hits 6 */
+        (true,  [3, 0, 0], 2, 6),   /* 16: 33 hits 6 */
+        (true,  [2, 4, 0], 3, 6),   /* 17: 22 hits 6 */
+        (false, [1, 6, 0], 2, 7),   /* 18: 61 hits 7 */
+        (false, [2, 5, 0], 2, 7),   /* 19: 52 hits 7 */
+        (false, [3, 4, 0], 2, 7),   /* 20: 43 hits 7 */
+        (false, [2, 6, 0], 2, 8),   /* 21: 62 hits 8 */
+        (false, [3, 5, 0], 2, 8),   /* 22: 53 hits 8 */
+        (true,  [4, 0, 0], 2, 8),   /* 23: 44 hits 8 */
+        (true,  [2, 4, 6], 4, 8),   /* 24: 22 hits 8 */
+        (false, [3, 6, 0], 2, 9),   /* 25: 63 hits 9 */
+        (false, [4, 5, 0], 2, 9),   /* 26: 54 hits 9 */
+        (true,  [3, 6, 0], 3, 9),   /* 27: 33 hits 9 */
+        (false, [4, 6, 0], 2, 10),  /* 28: 64 hits 10 */
+        (true,  [5, 0, 0], 2, 10),  /* 29: 55 hits 10 */
+        (false, [5, 6, 0], 2, 11),  /* 30: 65 hits 11 */
+        (true,  [6, 0, 0], 2, 12),  /* 31: 66 hits 12 */
+        (true,  [4, 8, 0], 3, 12),  /* 32: 44 hits 12 */
+        (true,  [3, 6, 9], 4, 12),  /* 33: 33 hits 12 */
+        (true,  [5, 10, 0], 3, 15), /* 34: 55 hits 15 */
+        (true,  [4, 8, 12], 4, 16), /* 35: 44 hits 16 */
+        (true,  [6, 12, 0], 3, 18), /* 36: 66 hits 18 */
+        (true,  [5, 10, 15], 4, 20),/* 37: 55 hits 20 */
+        (true,  [6, 12, 18], 4, 24),/* 38: 66 hits 24 */
+    ];
+
+    private static readonly int[][] AaRoll =
+    [
+        [0, 2, 5, 9],           /* 11 */
+        [1, 8, 17, 24],         /* 22 */
+        [3, 16, 27, 33],        /* 33 */
+        [6, 23, 32, 35],        /* 44 */
+        [10, 29, 34, 37],       /* 55 */
+        [13, 31, 36, 38],       /* 66 */
+        [0, 1, 4, -1],          /* 21 */
+        [0, 3, 7, -1],          /* 31 */
+        [1, 3, 12, -1],         /* 32 */
+        [0, 6, 11, -1],         /* 41 */
+        [1, 6, 15, -1],         /* 42 */
+        [3, 6, 20, -1],         /* 43 */
+        [0, 10, 14, -1],        /* 51 */
+        [1, 10, 19, -1],        /* 52 */
+        [3, 10, 22, -1],        /* 53 */
+        [6, 10, 26, -1],        /* 54 */
+        [0, 13, 18, -1],        /* 61 */
+        [1, 13, 21, -1],        /* 62 */
+        [3, 13, 25, -1],        /* 63 */
+        [6, 13, 28, -1],        /* 64 */
+        [10, 13, 30, -1],       /* 65 */
+    ];
+
     /// <summary>
     /// Compute base inputs (200 floats: 25 points × 4 features × 2 sides).
     /// Port of baseInputs() from lib/inputs.c.
@@ -282,106 +381,8 @@ public static class InputCalculator
     /// </summary>
     private static void CalculateHalfInputs(uint[] anBoard, uint[] anBoardOpp, Span<float> afInput)
     {
-        // aanCombination[n] - ways to hit from distance n+1
-        int[][] aanCombination =
-        [
-            [0, -1, -1, -1, -1],    /*  1 */
-            [1, 2, -1, -1, -1],     /*  2 */
-            [3, 4, 5, -1, -1],      /*  3 */
-            [6, 7, 8, 9, -1],       /*  4 */
-            [10, 11, 12, -1, -1],   /*  5 */
-            [13, 14, 15, 16, 17],   /*  6 */
-            [18, 19, 20, -1, -1],   /*  7 */
-            [21, 22, 23, 24, -1],   /*  8 */
-            [25, 26, 27, -1, -1],   /*  9 */
-            [28, 29, -1, -1, -1],   /* 10 */
-            [30, -1, -1, -1, -1],   /* 11 */
-            [31, 32, 33, -1, -1],   /* 12 */
-            [-1, -1, -1, -1, -1],   /* 13 */
-            [-1, -1, -1, -1, -1],   /* 14 */
-            [34, -1, -1, -1, -1],   /* 15 */
-            [35, -1, -1, -1, -1],   /* 16 */
-            [-1, -1, -1, -1, -1],   /* 17 */
-            [36, -1, -1, -1, -1],   /* 18 */
-            [-1, -1, -1, -1, -1],   /* 19 */
-            [37, -1, -1, -1, -1],   /* 20 */
-            [-1, -1, -1, -1, -1],   /* 21 */
-            [-1, -1, -1, -1, -1],   /* 22 */
-            [-1, -1, -1, -1, -1],   /* 23 */
-            [38, -1, -1, -1, -1],   /* 24 */
-        ];
-
-        // aIntermediate: [fAll, inter0, inter1, inter2, nFaces, nPips]
-        (bool fAll, int[] inter, int nFaces, int nPips)[] aIntermediate =
-        [
-            (true,  [0, 0, 0], 1, 1),   /*  0: 1x hits 1 */
-            (true,  [0, 0, 0], 1, 2),   /*  1: 2x hits 2 */
-            (true,  [1, 0, 0], 2, 2),   /*  2: 11 hits 2 */
-            (true,  [0, 0, 0], 1, 3),   /*  3: 3x hits 3 */
-            (false, [1, 2, 0], 2, 3),   /*  4: 21 hits 3 */
-            (true,  [1, 2, 0], 3, 3),   /*  5: 11 hits 3 */
-            (true,  [0, 0, 0], 1, 4),   /*  6: 4x hits 4 */
-            (false, [1, 3, 0], 2, 4),   /*  7: 31 hits 4 */
-            (true,  [2, 0, 0], 2, 4),   /*  8: 22 hits 4 */
-            (true,  [1, 2, 3], 4, 4),   /*  9: 11 hits 4 */
-            (true,  [0, 0, 0], 1, 5),   /* 10: 5x hits 5 */
-            (false, [1, 4, 0], 2, 5),   /* 11: 41 hits 5 */
-            (false, [2, 3, 0], 2, 5),   /* 12: 32 hits 5 */
-            (true,  [0, 0, 0], 1, 6),   /* 13: 6x hits 6 */
-            (false, [1, 5, 0], 2, 6),   /* 14: 51 hits 6 */
-            (false, [2, 4, 0], 2, 6),   /* 15: 42 hits 6 */
-            (true,  [3, 0, 0], 2, 6),   /* 16: 33 hits 6 */
-            (true,  [2, 4, 0], 3, 6),   /* 17: 22 hits 6 */
-            (false, [1, 6, 0], 2, 7),   /* 18: 61 hits 7 */
-            (false, [2, 5, 0], 2, 7),   /* 19: 52 hits 7 */
-            (false, [3, 4, 0], 2, 7),   /* 20: 43 hits 7 */
-            (false, [2, 6, 0], 2, 8),   /* 21: 62 hits 8 */
-            (false, [3, 5, 0], 2, 8),   /* 22: 53 hits 8 */
-            (true,  [4, 0, 0], 2, 8),   /* 23: 44 hits 8 */
-            (true,  [2, 4, 6], 4, 8),   /* 24: 22 hits 8 */
-            (false, [3, 6, 0], 2, 9),   /* 25: 63 hits 9 */
-            (false, [4, 5, 0], 2, 9),   /* 26: 54 hits 9 */
-            (true,  [3, 6, 0], 3, 9),   /* 27: 33 hits 9 */
-            (false, [4, 6, 0], 2, 10),  /* 28: 64 hits 10 */
-            (true,  [5, 0, 0], 2, 10),  /* 29: 55 hits 10 */
-            (false, [5, 6, 0], 2, 11),  /* 30: 65 hits 11 */
-            (true,  [6, 0, 0], 2, 12),  /* 31: 66 hits 12 */
-            (true,  [4, 8, 0], 3, 12),  /* 32: 44 hits 12 */
-            (true,  [3, 6, 9], 4, 12),  /* 33: 33 hits 12 */
-            (true,  [5, 10, 0], 3, 15), /* 34: 55 hits 15 */
-            (true,  [4, 8, 12], 4, 16), /* 35: 44 hits 16 */
-            (true,  [6, 12, 0], 3, 18), /* 36: 66 hits 18 */
-            (true,  [5, 10, 15], 4, 20),/* 37: 55 hits 20 */
-            (true,  [6, 12, 18], 4, 24),/* 38: 66 hits 24 */
-        ];
-
-        int[][] aaRoll =
-        [
-            [0, 2, 5, 9],           /* 11 */
-            [1, 8, 17, 24],         /* 22 */
-            [3, 16, 27, 33],        /* 33 */
-            [6, 23, 32, 35],        /* 44 */
-            [10, 29, 34, 37],       /* 55 */
-            [13, 31, 36, 38],       /* 66 */
-            [0, 1, 4, -1],          /* 21 */
-            [0, 3, 7, -1],          /* 31 */
-            [1, 3, 12, -1],         /* 32 */
-            [0, 6, 11, -1],         /* 41 */
-            [1, 6, 15, -1],         /* 42 */
-            [3, 6, 20, -1],         /* 43 */
-            [0, 10, 14, -1],        /* 51 */
-            [1, 10, 19, -1],        /* 52 */
-            [3, 10, 22, -1],        /* 53 */
-            [6, 10, 26, -1],        /* 54 */
-            [0, 13, 18, -1],        /* 61 */
-            [1, 13, 21, -1],        /* 62 */
-            [3, 13, 25, -1],        /* 63 */
-            [6, 13, 28, -1],        /* 64 */
-            [10, 13, 30, -1],       /* 65 */
-        ];
-
         int nOppBack;
-        int[] aHit = new int[39];
+        Span<int> aHit = stackalloc int[39];
         int nBoard;
 
         // ---- I_BREAK_CONTACT ----
@@ -502,10 +503,10 @@ public static class InputCalculator
 
                 for (int n = 0; n < 5; n++)
                 {
-                    int combIdx = aanCombination[j - 24 + i][n];
+                    int combIdx = AanCombination[j - 24 + i][n];
                     if (combIdx == -1) break;
 
-                    var pi = aIntermediate[combIdx];
+                    var pi = AIntermediate[combIdx];
 
                     if (pi.fAll)
                     {
@@ -534,8 +535,8 @@ public static class InputCalculator
             }
         }
 
-        int[] rollChequers = new int[21];
-        int[] rollPips = new int[21];
+        Span<int> rollChequers = stackalloc int[21];
+        Span<int> rollPips = stackalloc int[21];
 
         if (anBoard[24] == 0)
         {
@@ -545,11 +546,11 @@ public static class InputCalculator
                 int hitterUsed = -1;
                 for (int j = 0; j < 4; j++)
                 {
-                    int r = aaRoll[i][j];
+                    int r = AaRoll[i][j];
                     if (r < 0) break;
                     if (aHit[r] == 0) continue;
 
-                    var pi = aIntermediate[r];
+                    var pi = AIntermediate[r];
                     if (pi.nFaces == 1)
                     {
                         int k = Msb32(aHit[r]);
@@ -558,7 +559,7 @@ public static class InputCalculator
                         hitterUsed = k;
                         if (k - pi.nPips + 1 > rollPips[i])
                             rollPips[i] = k - pi.nPips + 1;
-                        if (aaRoll[i][3] >= 0 && (aHit[r] & ~(1 << k)) != 0)
+                        if (AaRoll[i][3] >= 0 && (aHit[r] & ~(1 << k)) != 0)
                             rollChequers[i]++;
                     }
                     else
@@ -587,11 +588,11 @@ public static class InputCalculator
                 int entryUsed = 0;
                 for (int j = 0; j < 4; j++)
                 {
-                    int r = aaRoll[i][j];
+                    int r = AaRoll[i][j];
                     if (r < 0) break;
                     if (aHit[r] == 0) continue;
 
-                    var pi = aIntermediate[r];
+                    var pi = AIntermediate[r];
                     if (pi.nFaces == 1)
                     {
                         for (int k = 24; k > 0; k--)
@@ -600,7 +601,7 @@ public static class InputCalculator
                             if (entryUsed != 0 && k != 24) break;
                             if (k != 24)
                             {
-                                int npip = aIntermediate[aaRoll[i][1 - j]].nPips;
+                                int npip = AIntermediate[AaRoll[i][1 - j]].nPips;
                                 if (anBoardOpp[npip - 1] > 1) break;
                                 entryUsed = 1;
                             }
@@ -634,9 +635,9 @@ public static class InputCalculator
             {
                 for (int j = 0; j < 2; j++)
                 {
-                    int r = aaRoll[i][j];
+                    int r = AaRoll[i][j];
                     if ((aHit[r] & (1 << 24)) == 0) continue;
-                    var pi = aIntermediate[r];
+                    var pi = AIntermediate[r];
                     if (pi.nFaces != 1) continue;
                     rollChequers[i]++;
                     if (25 - pi.nPips > rollPips[i])
