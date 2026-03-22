@@ -13,9 +13,10 @@ namespace GnuBgNet.Benchmarks;
 /// <summary>
 /// Performance comparison between native gnubg C library (via P/Invoke)
 /// and pure managed C# GnuBgNet — both original and optimized pipelines.
-/// Uses multiple distinct positions to avoid cache distortion.
-/// Both native and managed have internal eval caches; the comparison is
-/// fair because real usage also benefits from caching.
+///
+/// Each iteration uses freshly generated unique positions so neither
+/// side's eval cache provides an advantage. This measures raw computation
+/// speed without cache effects.
 /// </summary>
 [MemoryDiagnoser]
 public class NativeVsManagedBenchmarks
@@ -23,20 +24,23 @@ public class NativeVsManagedBenchmarks
     private Engine _managed = null!;
     private Engine _managedOptimized = null!;
     private GnubgApiContext _native = null!;
+    private string _dataDir = null!;
 
-    // Multiple distinct position IDs to reduce cache hits
-    private string[] _positionIds = null!;
+    // Fresh positions generated each iteration
+    private string[] _positions0Ply = null!;
+    private string _position2Ply = null!;
+    private int _iterationSeed;
 
     [GlobalSetup]
     public void Setup()
     {
-        var dataDir = BenchmarkSetup.FindDataDir();
+        _dataDir = BenchmarkSetup.FindDataDir();
 
         // Original managed engine
-        _managed = Engine.Create(dataDir);
+        _managed = Engine.Create(_dataDir);
 
         // Optimized managed engine (SIMD nets + UndoStack + Sparse inputs)
-        var nets = NetworkSet.LoadBinary(Path.Combine(dataDir, "gnubg.wd"));
+        var nets = NetworkSet.LoadBinary(Path.Combine(_dataDir, "gnubg.wd"));
         var simdNets = new NetworkSet
         {
             Contact = new SimdNeuralNetwork((NeuralNetwork)nets.Contact),
@@ -46,18 +50,25 @@ public class NativeVsManagedBenchmarks
             PruneCrashed = new SimdNeuralNetwork((NeuralNetwork)nets.PruneCrashed),
             PruneRace = new SimdNeuralNetwork((NeuralNetwork)nets.PruneRace),
         };
-        _managedOptimized = Engine.Create(dataDir, simdNets,
+        _managedOptimized = Engine.Create(_dataDir, simdNets,
             moveGenerator: UndoStackMoveGenerator.Instance,
             inputCalculator: SparseInputCalculator.Instance);
 
         // Native C engine
-        var weightsPath = Path.Combine(dataDir, "gnubg.weights");
-        var weightsBinPath = Path.Combine(dataDir, "gnubg.wd");
+        var weightsPath = Path.Combine(_dataDir, "gnubg.weights");
+        var weightsBinPath = Path.Combine(_dataDir, "gnubg.wd");
         _native = GnubgApiContext.Create();
-        _native.Init(weightsPath, weightsBinPath, dataDir, noBearoff: false);
+        _native.Init(weightsPath, weightsBinPath, _dataDir, noBearoff: false);
+    }
 
-        // Generate distinct positions by playing out from opening with varied dice
-        _positionIds = GenerateDistinctPositions(20);
+    [IterationSetup]
+    public void IterationSetup()
+    {
+        // Generate unique positions each iteration so caches never help.
+        // Incrementing seed ensures every iteration gets different positions.
+        _iterationSeed++;
+        _positions0Ply = GenerateDistinctPositions(20, _iterationSeed * 1000);
+        _position2Ply = GenerateDistinctPositions(1, _iterationSeed * 2000)[0];
     }
 
     [GlobalCleanup]
@@ -72,67 +83,57 @@ public class NativeVsManagedBenchmarks
         }
     }
 
-    // No IterationSetup — both sides benefit from their internal eval caches.
-    // With 20 distinct positions, the warmup fills both caches equally.
-    // This mirrors real-world usage where cache hits are the norm.
-
-    // --- 0-ply: evaluate 20 distinct positions ---
+    // --- 0-ply: evaluate 20 unique positions (no cache hits) ---
 
     [Benchmark]
     public void Native_Eval_0Ply_20Pos()
     {
-        for (int i = 0; i < _positionIds.Length; i++)
-            _native.EvaluatePosition(_positionIds[i]);
+        for (int i = 0; i < _positions0Ply.Length; i++)
+            _native.EvaluatePosition(_positions0Ply[i]);
     }
 
     [Benchmark(Baseline = true)]
     public void Managed_Eval_0Ply_20Pos()
     {
-        for (int i = 0; i < _positionIds.Length; i++)
-            _managed.EvaluatePosition(_positionIds[i]);
+        for (int i = 0; i < _positions0Ply.Length; i++)
+            _managed.EvaluatePosition(_positions0Ply[i]);
     }
 
     [Benchmark]
     public void Optimized_Eval_0Ply_20Pos()
     {
-        for (int i = 0; i < _positionIds.Length; i++)
-            _managedOptimized.EvaluatePosition(_positionIds[i]);
+        for (int i = 0; i < _positions0Ply.Length; i++)
+            _managedOptimized.EvaluatePosition(_positions0Ply[i]);
     }
 
-    // --- 2-ply: evaluate 5 distinct positions (expensive) ---
+    // --- 2-ply: evaluate 1 unique position (no cache hits) ---
 
     [Benchmark]
-    public void Native_Eval_2Ply_5Pos()
-    {
-        for (int i = 0; i < 5; i++)
-            _native.EvaluatePositionPlied(_positionIds[i], 2);
-    }
+    public GnubgEvaluationResult Native_Eval_2Ply()
+        => _native.EvaluatePositionPlied(_position2Ply, 2);
 
     [Benchmark]
-    public void Managed_Eval_2Ply_5Pos()
-    {
-        for (int i = 0; i < 5; i++)
-            _managed.EvaluatePositionPlied(_positionIds[i], 2);
-    }
+    public EvaluationResult Managed_Eval_2Ply()
+        => _managed.EvaluatePositionPlied(_position2Ply, 2);
 
     [Benchmark]
-    public void Optimized_Eval_2Ply_5Pos()
-    {
-        for (int i = 0; i < 5; i++)
-            _managedOptimized.EvaluatePositionPlied(_positionIds[i], 2);
-    }
+    public EvaluationResult Optimized_Eval_2Ply()
+        => _managedOptimized.EvaluatePositionPlied(_position2Ply, 2);
 
-    private string[] GenerateDistinctPositions(int count)
+    /// <summary>
+    /// Generate distinct mid-game positions by playing random moves from opening.
+    /// Each call with a different seed produces entirely different positions.
+    /// </summary>
+    private string[] GenerateDistinctPositions(int count, int seed)
     {
-        var positions = new List<string>();
-        var rng = new System.Random(12345);
+        var positions = new List<string>(count);
+        var rng = new System.Random(seed);
 
-        // Start from opening and make random valid moves with varied dice
         for (int i = 0; i < count; i++)
         {
             var board = Board.Opening();
-            // Make 1-3 random moves to get varied mid-game positions
-            int numMoves = rng.Next(1, 4);
+            // Play 2-6 random half-moves to reach varied mid-game contacts
+            int numMoves = rng.Next(2, 7);
             for (int m = 0; m < numMoves; m++)
             {
                 int d0 = rng.Next(1, 7);
