@@ -7,17 +7,26 @@ using System.Runtime.CompilerServices;
 namespace GnuBgNet;
 
 /// <summary>
+/// Gammon prices stored inline (no heap allocation).
+/// </summary>
+[InlineArray(4)]
+public struct GammonPriceArray
+{
+    private float _element0;
+}
+
+/// <summary>
 /// Cube and match state used for equity calculations.
 /// Port of cubeinfo from eval.h — in C this is a stack struct with
 /// int anScore[2] inline; we use Score0/Score1 to avoid heap arrays.
 /// </summary>
-public sealed class CubeInfo
+public struct CubeInfo
 {
     /// <summary>Current cube value (1, 2, 4, 8, ...).</summary>
-    public int Cube { get; set; } = 1;
+    public int Cube { get; set; }
 
     /// <summary>Cube owner: -1 = centered, 0 = player 0, 1 = player 1.</summary>
-    public int CubeOwner { get; set; } = -1;
+    public int CubeOwner { get; set; }
 
     /// <summary>Player on roll (0 or 1).</summary>
     public int Move { get; set; }
@@ -33,7 +42,7 @@ public sealed class CubeInfo
 
     /// <summary>Get score by player index (0 or 1).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int GetScore(int player) => player == 0 ? Score0 : Score1;
+    public readonly int GetScore(int player) => player == 0 ? Score0 : Score1;
 
     /// <summary>Crawford rule in effect.</summary>
     public bool Crawford { get; set; }
@@ -45,24 +54,31 @@ public sealed class CubeInfo
     public bool Beavers { get; set; }
 
     /// <summary>Gammon prices [winGammon, loseGammon, winBackgammon, loseBackgammon].</summary>
-    public float[] GammonPrice { get; set; } = new float[4];
+    public GammonPriceArray GammonPrice;
 
     /// <summary>Game variation.</summary>
-    public BackgammonVariation Variation { get; set; } = BackgammonVariation.Standard;
+    public BackgammonVariation Variation { get; set; }
 
     /// <summary>Creates a default money-game cube info.</summary>
-    public static CubeInfo Money() => new()
+    public static CubeInfo Money()
     {
-        Cube = 1,
-        CubeOwner = -1,
-        Move = 0,
-        MatchTo = 0,
-        Score0 = 0,
-        Score1 = 0,
-        Crawford = false,
-        Jacoby = false,
-        Beavers = true,
-        GammonPrice = [2f, 2f, 3f, 3f],
-        Variation = BackgammonVariation.Standard,
-    };
+        var ci = new CubeInfo
+        {
+            Cube = 1,
+            CubeOwner = -1,
+            Move = 0,
+            MatchTo = 0,
+            Score0 = 0,
+            Score1 = 0,
+            Crawford = false,
+            Jacoby = false,
+            Beavers = true,
+            Variation = BackgammonVariation.Standard,
+        };
+        ci.GammonPrice[0] = 2f;
+        ci.GammonPrice[1] = 2f;
+        ci.GammonPrice[2] = 3f;
+        ci.GammonPrice[3] = 3f;
+        return ci;
+    }
 }

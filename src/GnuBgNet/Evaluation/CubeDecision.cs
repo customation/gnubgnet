@@ -89,6 +89,7 @@ public static class CubeDecision
     {
         var ci = new CubeInfo
         {
+            Cube = 1,
             CubeOwner = cubeOwner,
             Move = 0,
             MatchTo = 0,
@@ -162,7 +163,7 @@ public static class CubeDecision
 
         // No-double: cubeful equity with current cube state
         float ndMwc = cubeDead
-            ? Eq2Mwc(UtilityMatch(output, ci, met), ci, met)
+            ? Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met)
             : Cl2CfMatch(output, ci, met, cubeEff);
 
         // Double-pass: MWC for cashing
@@ -181,10 +182,10 @@ public static class CubeDecision
             Beavers = ci.Beavers,
             Variation = ci.Variation,
         };
-        SetGammonPrices(ciOppCube, met);
+        SetGammonPrices(ref ciOppCube, met);
 
         float dtMwc = IsCubeDead(ciOppCube)
-            ? Eq2Mwc(UtilityMatch(output, ciOppCube, met), ciOppCube, met)
+            ? Eq2Mwc(UtilityMatch(output, ref ciOppCube, met), ciOppCube, met)
             : Cl2CfMatch(output, ciOppCube, met, cubeEff);
 
         // Build aarOutput for FindBestCubeDecision (MWC values)
@@ -377,9 +378,9 @@ public static class CubeDecision
     /// Cubeless equity for match play using gammon prices.
     /// Port of Utility() for match play from eval.c.
     /// </summary>
-    internal static float UtilityMatch(ReadOnlySpan<float> output, CubeInfo ci, IMatchEquityTable met)
+    internal static float UtilityMatch(ReadOnlySpan<float> output, ref CubeInfo ci, IMatchEquityTable met)
     {
-        SetGammonPrices(ci, met);
+        SetGammonPrices(ref ci, met);
         return output[Constants.OutputWin] * 2.0f - 1.0f
             + output[Constants.OutputWinGammon] * ci.GammonPrice[ci.Move]
             - output[Constants.OutputLoseGammon] * ci.GammonPrice[1 - ci.Move]
@@ -391,7 +392,7 @@ public static class CubeDecision
     /// Set gammon prices in a CubeInfo based on the match equity table.
     /// The gammon price is how much a gammon win/loss is worth relative to a normal win/loss.
     /// </summary>
-    internal static void SetGammonPrices(CubeInfo ci, IMatchEquityTable met)
+    internal static void SetGammonPrices(ref CubeInfo ci, IMatchEquityTable met)
     {
         if (ci.MatchTo == 0)
         {
@@ -538,7 +539,7 @@ public static class CubeDecision
         // When the cube is dead (Crawford, DMP, both-can-win), cubeful = cubeless.
         // Port of the fDoCubeful() guard in Cl2CfMatch() from eval.c.
         if (IsCubeDead(ci))
-            return Eq2Mwc(UtilityMatch(output, ci, met), ci, met);
+            return Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
         if (ci.CubeOwner == -1)
             return Cl2CfMatchCentered(output, ci, met, cubeEfficiency);
@@ -557,7 +558,7 @@ public static class CubeDecision
     {
         ComputeGammonRatios(output, out float rG0, out float rBG0, out float rG1, out float rBG1);
 
-        float mwcDead = Eq2Mwc(UtilityMatch(output, ci, met), ci, met);
+        float mwcDead = Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
         // Get live cube cash points
         float[] arCP = new float[2];
@@ -613,7 +614,7 @@ public static class CubeDecision
     {
         ComputeGammonRatios(output, out float rG0, out float rBG0, out float rG1, out float rBG1);
 
-        float mwcDead = Eq2Mwc(UtilityMatch(output, ci, met), ci, met);
+        float mwcDead = Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
         float[] arCP = new float[2];
         GetPoints(output, ci, met, arCP);
@@ -659,7 +660,7 @@ public static class CubeDecision
     {
         ComputeGammonRatios(output, out float rG0, out float rBG0, out float rG1, out float rBG1);
 
-        float mwcDead = Eq2Mwc(UtilityMatch(output, ci, met), ci, met);
+        float mwcDead = Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
         float[] arCP = new float[2];
         GetPoints(output, ci, met, arCP);

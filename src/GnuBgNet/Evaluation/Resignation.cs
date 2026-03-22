@@ -141,7 +141,7 @@ public static class Resignation
         else if (met != null)
         {
             // Match play: use gammon prices
-            CubeDecision.SetGammonPrices(ci, met);
+            CubeDecision.SetGammonPrices(ref ci, met);
             eq += output[Constants.OutputWinGammon] * ci.GammonPrice[ci.Move]
                 - output[Constants.OutputLoseGammon] * ci.GammonPrice[1 - ci.Move]
                 + output[Constants.OutputWinBackgammon] * ci.GammonPrice[2 + ci.Move]

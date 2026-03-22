@@ -136,17 +136,17 @@ public sealed class Evaluator : IPositionEvaluator
             Span<float> variationOutput = stackalloc float[Constants.NumOutputs];
 
             // Create opponent cubeinfo once (same for all 21 rolls)
-            CubeInfo? ciOpp = ci != null ? new CubeInfo
+            CubeInfo? ciOpp = ci.HasValue ? new CubeInfo
             {
-                Cube = ci.Cube,
-                CubeOwner = ci.CubeOwner,
-                Move = 1 - ci.Move,
-                MatchTo = ci.MatchTo,
-                Score0 = ci.Score0, Score1 = ci.Score1,
-                Crawford = ci.Crawford,
-                Jacoby = ci.Jacoby,
-                Beavers = ci.Beavers,
-                Variation = ci.Variation,
+                Cube = ci.Value.Cube,
+                CubeOwner = ci.Value.CubeOwner,
+                Move = 1 - ci.Value.Move,
+                MatchTo = ci.Value.MatchTo,
+                Score0 = ci.Value.Score0, Score1 = ci.Value.Score1,
+                Crawford = ci.Value.Crawford,
+                Jacoby = ci.Value.Jacoby,
+                Beavers = ci.Value.Beavers,
+                Variation = ci.Value.Variation,
             } : null;
 
             for (int n0 = 1; n0 <= 6; n0++)
@@ -329,30 +329,31 @@ public sealed class Evaluator : IPositionEvaluator
         var moveBoard = new Board();
         PositionId.FromKeySwappedInto(move.Key, ref moveBoard);
 
-        if (cubeful && ci != null)
+        if (cubeful && ci.HasValue)
         {
+            var ciVal = ci.Value;
             // Create opponent-perspective cube info for after the move
             var ciOpp = new CubeInfo
             {
-                Cube = ci.Cube,
-                CubeOwner = ci.CubeOwner,
-                Move = 1 - ci.Move,
-                MatchTo = ci.MatchTo,
-                Score0 = ci.Score0, Score1 = ci.Score1,
-                Crawford = ci.Crawford,
-                Jacoby = ci.Jacoby,
-                Beavers = ci.Beavers,
-                Variation = ci.Variation,
+                Cube = ciVal.Cube,
+                CubeOwner = ciVal.CubeOwner,
+                Move = 1 - ciVal.Move,
+                MatchTo = ciVal.MatchTo,
+                Score0 = ciVal.Score0, Score1 = ciVal.Score1,
+                Crawford = ciVal.Crawford,
+                Jacoby = ciVal.Jacoby,
+                Beavers = ciVal.Beavers,
+                Variation = ciVal.Variation,
             };
 
             var ec = new EvalContext { Plies = nPlies, Cubeful = true, UsePrune = true };
             GeneralEvaluationEPlied(moveBoard, arEval, ciOpp, ec, nPlies);
-            InvertEvaluationR(arEval, ci.MatchTo > 0);
+            InvertEvaluationR(arEval, ciVal.MatchTo > 0);
 
-            if (ci.MatchTo > 0)
+            if (ciVal.MatchTo > 0)
             {
                 arEval[Constants.OutputCubefulEquity] =
-                    CubeDecision.Mwc2Eq(arEval[Constants.OutputCubefulEquity], ci, _met);
+                    CubeDecision.Mwc2Eq(arEval[Constants.OutputCubefulEquity], ciVal, _met);
             }
         }
         else
@@ -407,17 +408,17 @@ public sealed class Evaluator : IPositionEvaluator
         // pci->fMove = !pci->fMove flip in FindBestMoveInEval().
         // The pruning nets evaluate from opponent's perspective (Swapped board),
         // so we need opponent's gammon prices for correct UtilityME scoring.
-        CubeInfo? ciOpp = ci != null ? new CubeInfo
+        CubeInfo? ciOpp = ci.HasValue ? new CubeInfo
         {
-            Cube = ci.Cube,
-            CubeOwner = ci.CubeOwner,
-            Move = 1 - ci.Move,
-            MatchTo = ci.MatchTo,
-            Score0 = ci.Score0, Score1 = ci.Score1,
-            Crawford = ci.Crawford,
-            Jacoby = ci.Jacoby,
-            Beavers = ci.Beavers,
-            Variation = ci.Variation,
+            Cube = ci.Value.Cube,
+            CubeOwner = ci.Value.CubeOwner,
+            Move = 1 - ci.Value.Move,
+            MatchTo = ci.Value.MatchTo,
+            Score0 = ci.Value.Score0, Score1 = ci.Value.Score1,
+            Crawford = ci.Value.Crawford,
+            Jacoby = ci.Value.Jacoby,
+            Beavers = ci.Value.Beavers,
+            Variation = ci.Value.Variation,
         } : null;
 
         var pruneBoard = new Board();
@@ -576,9 +577,11 @@ public sealed class Evaluator : IPositionEvaluator
     /// </summary>
     private float ComputeEquity(ReadOnlySpan<float> output, CubeInfo? ci)
     {
-        if (ci != null && ci.MatchTo > 0)
-            return CubeDecision.UtilityMatch(output, ci,
-                _met);
+        if (ci.HasValue && ci.Value.MatchTo > 0)
+        {
+            var ciVal = ci.Value;
+            return CubeDecision.UtilityMatch(output, ref ciVal, _met);
+        }
         return MatchEquityTable.MoneyEquity(output);
     }
 
@@ -1104,8 +1107,7 @@ public sealed class Evaluator : IPositionEvaluator
                 aciSpan, 1, ci, ec, nPlies, false);
 
             arOutput[Constants.OutputEquity] = ci.MatchTo > 0
-                ? CubeDecision.UtilityMatch(arOutput, ci,
-                    _met)
+                ? CubeDecision.UtilityMatch(arOutput, ref ci, _met)
                 : MatchEquityTable.MoneyEquity(arOutput);
             arOutput[Constants.OutputCubefulEquity] = rCubeful;
         }
@@ -1113,8 +1115,7 @@ public sealed class Evaluator : IPositionEvaluator
         {
             EvaluatePositionPlied(board, arOutput, nPlies, ec.UsePrune, ec, ci);
             arOutput[Constants.OutputEquity] = ci.MatchTo > 0
-                ? CubeDecision.UtilityMatch(arOutput, ci,
-                    _met)
+                ? CubeDecision.UtilityMatch(arOutput, ref ci, _met)
                 : MatchEquityTable.MoneyEquity(arOutput);
             arOutput[Constants.OutputCubefulEquity] = 0.0f;
         }

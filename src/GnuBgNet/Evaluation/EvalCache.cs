@@ -176,29 +176,30 @@ public sealed class EvalCache : IEvalCache
     {
         int key = nPlies | ((cubeful ? 1 : 0) << 4);
 
-        if (ci != null)
-            key |= (ci.Move << 5);
+        if (ci.HasValue)
+            key |= (ci.Value.Move << 5);
 
         if (nPlies > 0)
             key ^= (usePrune ? 1 : 0) << 6;
 
-        if (ci != null && (nPlies > 0 || fCubefulEquity))
+        if (ci.HasValue && (nPlies > 0 || fCubefulEquity))
         {
-            if (ci.MatchTo > 0)
+            var c = ci.Value;
+            if (c.MatchTo > 0)
             {
                 key ^=
-                    ((ci.MatchTo - ci.GetScore(ci.Move) - 1) << 7) ^
-                    ((ci.MatchTo - ci.GetScore(1 - ci.Move) - 1) << 13) ^
-                    (LogCube(ci.Cube) << 19) ^
-                    ((ci.CubeOwner < 0 ? 2 : (ci.CubeOwner == ci.Move ? 1 : 0)) << 23) ^
-                    ((ci.Crawford ? 1 : 0) << 25);
+                    ((c.MatchTo - c.GetScore(c.Move) - 1) << 7) ^
+                    ((c.MatchTo - c.GetScore(1 - c.Move) - 1) << 13) ^
+                    (LogCube(c.Cube) << 19) ^
+                    ((c.CubeOwner < 0 ? 2 : (c.CubeOwner == c.Move ? 1 : 0)) << 23) ^
+                    ((c.Crawford ? 1 : 0) << 25);
             }
             else if (cubeful || fCubefulEquity)
             {
                 key ^=
-                    ((ci.CubeOwner < 0 ? 2 : (ci.CubeOwner == ci.Move ? 1 : 0)) << 23) ^
-                    ((ci.Jacoby ? 1 : 0) << 26) ^
-                    ((ci.Beavers ? 1 : 0) << 27);
+                    ((c.CubeOwner < 0 ? 2 : (c.CubeOwner == c.Move ? 1 : 0)) << 23) ^
+                    ((c.Jacoby ? 1 : 0) << 26) ^
+                    ((c.Beavers ? 1 : 0) << 27);
             }
 
             if (fCubefulEquity)

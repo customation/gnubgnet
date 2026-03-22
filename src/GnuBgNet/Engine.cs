@@ -156,8 +156,8 @@ public sealed class Engine : IDisposable
     /// </summary>
     public EvaluationResult EvaluatePosition(Board board, CubeInfo? cubeInfo = null)
     {
-        cubeInfo ??= CubeInfo.Money();
-        return BuildEvaluationResult(board, cubeInfo, 0);
+        var ci = cubeInfo ?? CubeInfo.Money();
+        return BuildEvaluationResult(board, ci, 0);
     }
 
     /// <summary>
@@ -178,8 +178,8 @@ public sealed class Engine : IDisposable
     /// </summary>
     public EvaluationResult EvaluatePositionPlied(Board board, int plies, CubeInfo? cubeInfo = null)
     {
-        cubeInfo ??= CubeInfo.Money();
-        return BuildEvaluationResult(board, cubeInfo, plies);
+        var ci = cubeInfo ?? CubeInfo.Money();
+        return BuildEvaluationResult(board, ci, plies);
     }
 
     /// <summary>
@@ -198,7 +198,7 @@ public sealed class Engine : IDisposable
             _evaluator.EvaluatePosition(board, output);
 
         float equity = ci.MatchTo > 0
-            ? CubeDecision.UtilityMatch(output, ci, _met)
+            ? CubeDecision.UtilityMatch(output, ref ci, _met)
             : MatchEquityTable.MoneyEquity(output);
 
         // Second evaluation: cubeful (matches C: ec.fCubeful = 1; GeneralEvaluationE)
@@ -240,8 +240,8 @@ public sealed class Engine : IDisposable
     /// </summary>
     public FullEvaluationResult EvaluatePositionFull(Board board, CubeInfo? cubeInfo = null)
     {
-        cubeInfo ??= CubeInfo.Money();
-        return BuildFullResult(board, cubeInfo, 0);
+        var ci = cubeInfo ?? CubeInfo.Money();
+        return BuildFullResult(board, ci, 0);
     }
 
     /// <summary>
@@ -262,8 +262,8 @@ public sealed class Engine : IDisposable
     /// </summary>
     public FullEvaluationResult EvaluatePositionFullPlied(Board board, int plies, CubeInfo? cubeInfo = null)
     {
-        cubeInfo ??= CubeInfo.Money();
-        return BuildFullResult(board, cubeInfo, plies);
+        var ci = cubeInfo ?? CubeInfo.Money();
+        return BuildFullResult(board, ci, plies);
     }
 
     /// <summary>
@@ -539,6 +539,7 @@ public sealed class Engine : IDisposable
         float cubeEff = CubeEfficiency.Compute(board, pc, plies);
         var ci = new CubeInfo
         {
+            Cube = 1,
             CubeOwner = cubeOwner,
             Move = 0,
             MatchTo = 0,
@@ -945,10 +946,10 @@ public sealed class Engine : IDisposable
     /// </summary>
     public int GetResignation(Board board, CubeInfo? cubeInfo = null)
     {
-        cubeInfo ??= CubeInfo.Money();
+        var ci = cubeInfo ?? CubeInfo.Money();
         float[] output = new float[Constants.NumOutputs];
         _evaluator.EvaluatePosition(board, output);
-        return Resignation.GetResignation(output, cubeInfo, _met);
+        return Resignation.GetResignation(output, ci, _met);
     }
 
     /// <summary>
@@ -967,10 +968,10 @@ public sealed class Engine : IDisposable
     /// </summary>
     public ResignationResult GetResignEquities(Board board, int resignLevel, CubeInfo? cubeInfo = null)
     {
-        cubeInfo ??= CubeInfo.Money();
+        var ci = cubeInfo ?? CubeInfo.Money();
         float[] output = new float[Constants.NumOutputs];
         _evaluator.EvaluatePosition(board, output);
-        Resignation.GetResignEquities(output, cubeInfo, resignLevel,
+        Resignation.GetResignEquities(output, ci, resignLevel,
             out float eqBefore, out float eqAfter, _met);
         return new ResignationResult(resignLevel, eqBefore, eqAfter);
     }
@@ -981,10 +982,10 @@ public sealed class Engine : IDisposable
     /// </summary>
     public int CheckResignation(Board board, int resignLevel, CubeInfo? cubeInfo = null, float maxCost = 0.05f)
     {
-        cubeInfo ??= CubeInfo.Money();
+        var ci = cubeInfo ?? CubeInfo.Money();
         float[] output = new float[Constants.NumOutputs];
         _evaluator.EvaluatePosition(board, output);
-        return Resignation.CheckResignation(output, cubeInfo, resignLevel, _met, maxCost);
+        return Resignation.CheckResignation(output, ci, resignLevel, _met, maxCost);
     }
 
     // ---- Board Display ----
