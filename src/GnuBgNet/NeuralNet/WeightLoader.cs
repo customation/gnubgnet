@@ -10,12 +10,12 @@ namespace GnuBgNet.NeuralNet;
 /// </summary>
 public sealed class NetworkSet
 {
-    public required NeuralNetwork Contact { get; init; }
-    public required NeuralNetwork Race { get; init; }
-    public required NeuralNetwork Crashed { get; init; }
-    public required NeuralNetwork PruneContact { get; init; }
-    public required NeuralNetwork PruneCrashed { get; init; }
-    public required NeuralNetwork PruneRace { get; init; }
+    public required INeuralNetwork Contact { get; init; }
+    public required INeuralNetwork Race { get; init; }
+    public required INeuralNetwork Crashed { get; init; }
+    public required INeuralNetwork PruneContact { get; init; }
+    public required INeuralNetwork PruneCrashed { get; init; }
+    public required INeuralNetwork PruneRace { get; init; }
 
     /// <summary>
     /// Load all 6 networks from a binary .wd file.

@@ -20,18 +20,20 @@ namespace GnuBgNet;
 public sealed class Engine : IDisposable
 {
     private readonly NetworkSet _nets;
-    private readonly BearoffDatabase? _oneSidedBearoff;
-    private readonly BearoffDatabase? _twoSidedBearoff;
-    private readonly BearoffDatabase? _hyper1;
-    private readonly BearoffDatabase? _hyper2;
-    private readonly BearoffDatabase? _hyper3;
-    private readonly Evaluator _evaluator;
-    internal Evaluator Evaluator => _evaluator;
-    private readonly MatchEquityTable _met;
+    private readonly IBearoffDatabase? _oneSidedBearoff;
+    private readonly IBearoffDatabase? _twoSidedBearoff;
+    private readonly IBearoffDatabase? _hyper1;
+    private readonly IBearoffDatabase? _hyper2;
+    private readonly IBearoffDatabase? _hyper3;
+    private readonly IPositionEvaluator _evaluator;
+    internal IPositionEvaluator Evaluator => _evaluator;
+    private readonly IMatchEquityTable _met;
 
-    private Engine(NetworkSet nets, BearoffDatabase? osBearoff, BearoffDatabase? tsBearoff,
-        BearoffDatabase? hyper1, BearoffDatabase? hyper2, BearoffDatabase? hyper3,
-        MatchEquityTable met)
+    private Engine(NetworkSet nets, IBearoffDatabase? osBearoff, IBearoffDatabase? tsBearoff,
+        IBearoffDatabase? hyper1, IBearoffDatabase? hyper2, IBearoffDatabase? hyper3,
+        IMatchEquityTable met,
+        IEvalCache? mainCache = null, IEvalCache? pruneCache = null,
+        IMoveGenerator? moveGenerator = null, IInputCalculator? inputCalculator = null)
     {
         _nets = nets;
         _oneSidedBearoff = osBearoff;
@@ -39,7 +41,8 @@ public sealed class Engine : IDisposable
         _hyper1 = hyper1;
         _hyper2 = hyper2;
         _hyper3 = hyper3;
-        _evaluator = new Evaluator(nets, osBearoff, tsBearoff, hyper1, hyper2, hyper3, met);
+        _evaluator = new Evaluator(nets, osBearoff, tsBearoff, hyper1, hyper2, hyper3,
+            met, mainCache, pruneCache, moveGenerator, inputCalculator);
         _met = met;
     }
 
@@ -356,7 +359,7 @@ public sealed class Engine : IDisposable
                 _evaluator.EvaluatePosition(swapped, output);
 
             // Invert: we evaluated from opponent's perspective
-            Evaluator.InvertEvaluation(output);
+            Evaluation.Evaluator.InvertEvaluation(output);
 
             float equity = MatchEquityTable.MoneyEquity(output);
             string resultPosId = PositionId.Encode(newBoard);
@@ -464,7 +467,7 @@ public sealed class Engine : IDisposable
     /// </summary>
     public PositionClass ClassifyPosition(Board board)
     {
-        return Classifier.Classify(board, _evaluator);
+        return _evaluator.ClassifyPosition(board);
     }
 
     /// <summary>
@@ -499,7 +502,7 @@ public sealed class Engine : IDisposable
         float[] output = new float[Constants.NumOutputs];
         _evaluator.EvaluatePosition(board, output);
 
-        var pc = Classifier.Classify(board, _evaluator);
+        var pc = _evaluator.ClassifyPosition(board);
         float cubeEff = CubeEfficiency.Compute(board, pc, 0);
         return CubeDecision.Analyse(output, cubeInfo, _met, cubeEff);
     }
@@ -512,7 +515,7 @@ public sealed class Engine : IDisposable
         float[] output = new float[Constants.NumOutputs];
         _evaluator.EvaluatePositionPlied(board, output, plies);
 
-        var pc = Classifier.Classify(board, _evaluator);
+        var pc = _evaluator.ClassifyPosition(board);
         float cubeEff = CubeEfficiency.Compute(board, pc, plies);
         var ci = new CubeInfo
         {
@@ -533,7 +536,7 @@ public sealed class Engine : IDisposable
         float[] output = new float[Constants.NumOutputs];
         _evaluator.EvaluatePositionPlied(board, output, plies);
 
-        var pc = Classifier.Classify(board, _evaluator);
+        var pc = _evaluator.ClassifyPosition(board);
         float cubeEff = CubeEfficiency.Compute(board, pc, plies);
         return CubeDecision.Analyse(output, cubeInfo, _met, cubeEff);
     }
@@ -1014,7 +1017,7 @@ public sealed class Engine : IDisposable
     /// </summary>
     public float[] ExtractRawInputs(Board board)
     {
-        var pc = Classifier.Classify(board, _evaluator);
+        var pc = _evaluator.ClassifyPosition(board);
         int size = pc switch
         {
             PositionClass.Race => Constants.NumRaceInputs,

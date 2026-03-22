@@ -7,7 +7,7 @@ namespace GnuBgNet.Random;
 /// Mersenne Twister MT19937 pseudo-random number generator.
 /// Deterministic given a seed, used for reproducible rollouts.
 /// </summary>
-public sealed class MersenneTwister
+public sealed class MersenneTwister : IDiceGenerator
 {
     private const int N = 624;
     private const int M = 397;

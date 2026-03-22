@@ -9,7 +9,7 @@ namespace GnuBgNet.MatchEquity;
 /// Match equity table: pre-Crawford and post-Crawford equities.
 /// Port of aafMET/aafMETPostCrawford from matchequity.c.
 /// </summary>
-public sealed class MatchEquityTable
+public sealed class MatchEquityTable : IMatchEquityTable
 {
     private const int MaxScore = Constants.MaxScore;
 

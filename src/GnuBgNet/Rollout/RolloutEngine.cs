@@ -18,10 +18,10 @@ namespace GnuBgNet.Rollout;
 /// </summary>
 public sealed class RolloutEngine
 {
-    private readonly Evaluator _evaluator;
-    private readonly MatchEquityTable? _met;
+    private readonly IPositionEvaluator _evaluator;
+    private readonly IMatchEquityTable? _met;
 
-    public RolloutEngine(Evaluator evaluator, MatchEquityTable? met = null)
+    public RolloutEngine(IPositionEvaluator evaluator, IMatchEquityTable? met = null)
     {
         _evaluator = evaluator;
         _met = met;
@@ -263,7 +263,7 @@ public sealed class RolloutEngine
             // Check for game over.
             // Board is from current player's perspective; Classify + EvalOver give
             // the result from the current player's perspective.  Invert if odd turn.
-            var pc = Classifier.Classify(board, _evaluator);
+            var pc = _evaluator.ClassifyPosition(board);
             if (pc == PositionClass.Over)
             {
                 _evaluator.EvaluatePositionByClass(board, output, pc);
@@ -323,12 +323,6 @@ public sealed class RolloutEngine
                 bool canDouble = cubeOwner == -1 || cubeOwner == fMove;
                 if (canDouble)
                 {
-                    // Evaluate from current player's perspective (board is already correct)
-                    if (effectiveCubePlies > 0)
-                        _evaluator.EvaluatePositionPlied(board, output, effectiveCubePlies - 1);
-                    else
-                        _evaluator.EvaluatePosition(board, output);
-
                     // Build CubeInfo with absolute player indices (matching C's convention)
                     var ci = new CubeInfo
                     {
@@ -342,9 +336,50 @@ public sealed class RolloutEngine
 
                     if (CubeDecision.GetDPEq(ci, _met, out float dpEquity))
                     {
-                        var cubeResult = CubeDecision.AnalyseMoney(output, ci);
+                        // Port of GeneralCubeDecisionE from eval.c:
+                        // Evaluate with cubeful flag at pecCube plies, then use
+                        // FindCubeDecision to determine the cube action.
+                        var ec = new EvalContext
+                        {
+                            Cubeful = true,
+                            Plies = effectiveCubePlies,
+                            UsePrune = true,
+                            Deterministic = true,
+                        };
 
-                        switch (cubeResult.Action)
+                        // No-double evaluation (current cube state)
+                        float[] ndOutput = new float[Constants.NumRolloutOutputs];
+                        _evaluator.GeneralEvaluationEPlied(board, ndOutput, ci, ec, effectiveCubePlies);
+
+                        // Double-take evaluation (doubled cube, opponent owns)
+                        var ciDouble = new CubeInfo
+                        {
+                            Cube = cubeValue * 2,
+                            CubeOwner = 1 - fMove,
+                            Move = fMove,
+                            MatchTo = 0,
+                            Jacoby = false,
+                            Beavers = false,
+                        };
+                        float[] dtOutput = new float[Constants.NumRolloutOutputs];
+                        _evaluator.GeneralEvaluationEPlied(board, dtOutput, ciDouble, ec, effectiveCubePlies);
+
+                        // Copy ND probabilities to output for use in DP result
+                        for (int i = 0; i < Constants.NumOutputs; i++)
+                            output[i] = ndOutput[i];
+
+                        // Build arDouble for FindCubeDecision
+                        float[] arDouble = new float[4];
+                        arDouble[CubeOutputIndex.Drop] = dpEquity;
+                        arDouble[CubeOutputIndex.NoDouble] = ndOutput[Constants.OutputCubefulEquity];
+                        arDouble[CubeOutputIndex.Take] = dtOutput[Constants.OutputCubefulEquity];
+
+                        // Build aarOutput for FindCubeDecision
+                        float[][] aarOutput = [ndOutput, dtOutput];
+
+                        var cubeAction = CubeDecision.FindBestCubeDecision(arDouble, aarOutput, ci);
+
+                        switch (cubeAction)
                         {
                             case CubeAction.DoublePass:
                             case CubeAction.RedoublePass:
@@ -478,8 +513,9 @@ public sealed class RolloutEngine
 
         // Truncated: evaluate at current position.
         // Board is from current player's perspective; invert if odd turn.
+        // Matches C: GeneralEvaluationE with pecCube.nPlies for truncation.
         if (settings.Cubeful && settings.CubePlies > 0)
-            _evaluator.EvaluatePositionPlied(board, output, settings.CubePlies - 1);
+            _evaluator.EvaluatePositionPlied(board, output, settings.CubePlies);
         else
             _evaluator.EvaluatePosition(board, output);
 

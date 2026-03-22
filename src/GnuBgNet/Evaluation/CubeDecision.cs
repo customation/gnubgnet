@@ -70,7 +70,7 @@ public static class CubeDecision
     public static CubeDecisionResult Analyse(
         ReadOnlySpan<float> output,
         CubeInfo ci,
-        MatchEquityTable met,
+        IMatchEquityTable met,
         float cubeEfficiency = DefaultCubeEfficiency)
     {
         if (ci.MatchTo == 0)
@@ -154,7 +154,7 @@ public static class CubeDecision
     public static CubeDecisionResult AnalyseMatch(
         ReadOnlySpan<float> output,
         CubeInfo ci,
-        MatchEquityTable met,
+        IMatchEquityTable met,
         float cubeEfficiency = DefaultCubeEfficiency)
     {
         bool cubeDead = IsCubeDead(ci);
@@ -222,7 +222,7 @@ public static class CubeDecision
     /// Port of GetDPEq() from eval.c.
     /// Returns true if doubling is possible.
     /// </summary>
-    public static bool GetDPEq(CubeInfo ci, MatchEquityTable? met, out float dpEquity)
+    public static bool GetDPEq(CubeInfo ci, IMatchEquityTable? met, out float dpEquity)
     {
         if (ci.MatchTo == 0)
         {
@@ -377,7 +377,7 @@ public static class CubeDecision
     /// Cubeless equity for match play using gammon prices.
     /// Port of Utility() for match play from eval.c.
     /// </summary>
-    internal static float UtilityMatch(ReadOnlySpan<float> output, CubeInfo ci, MatchEquityTable met)
+    internal static float UtilityMatch(ReadOnlySpan<float> output, CubeInfo ci, IMatchEquityTable met)
     {
         SetGammonPrices(ci, met);
         return output[Constants.OutputWin] * 2.0f - 1.0f
@@ -391,7 +391,7 @@ public static class CubeDecision
     /// Set gammon prices in a CubeInfo based on the match equity table.
     /// The gammon price is how much a gammon win/loss is worth relative to a normal win/loss.
     /// </summary>
-    internal static void SetGammonPrices(CubeInfo ci, MatchEquityTable met)
+    internal static void SetGammonPrices(CubeInfo ci, IMatchEquityTable met)
     {
         if (ci.MatchTo == 0)
         {
@@ -447,7 +447,7 @@ public static class CubeDecision
     /// Port of getME() from matchequity.c.
     /// </summary>
     internal static float GetME(int score0, int score1, int matchTo,
-        int player, int points, int whoWins, bool crawford, MatchEquityTable met)
+        int player, int points, int whoWins, bool crawford, IMatchEquityTable met)
     {
         int n0 = matchTo - (score0 + (whoWins == 0 ? 0 : 1) * points) - 1;
         int n1 = matchTo - (score1 + (whoWins != 0 ? 0 : 1) * points) - 1;
@@ -489,7 +489,7 @@ public static class CubeDecision
     /// Get MWC for double/pass outcome.
     /// Port of GetDPEq() match play path from eval.c.
     /// </summary>
-    private static float GetDoublePassMwc(CubeInfo ci, MatchEquityTable met)
+    private static float GetDoublePassMwc(CubeInfo ci, IMatchEquityTable met)
     {
         return GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
@@ -499,7 +499,7 @@ public static class CubeDecision
     /// Convert normalized equity to match winning chance.
     /// Port of eq2mwc() from eval.c.
     /// </summary>
-    internal static float Eq2Mwc(float eq, CubeInfo ci, MatchEquityTable met)
+    internal static float Eq2Mwc(float eq, CubeInfo ci, IMatchEquityTable met)
     {
         float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
@@ -513,7 +513,7 @@ public static class CubeDecision
     /// Convert match winning chance to normalized equity.
     /// Port of mwc2eq() from eval.c.
     /// </summary>
-    internal static float Mwc2Eq(float mwc, CubeInfo ci, MatchEquityTable met)
+    internal static float Mwc2Eq(float mwc, CubeInfo ci, IMatchEquityTable met)
     {
         float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
@@ -533,7 +533,7 @@ public static class CubeDecision
     /// Port of Cl2CfMatch() from eval.c.
     /// </summary>
     internal static float Cl2CfMatch(
-        ReadOnlySpan<float> output, CubeInfo ci, MatchEquityTable met, float cubeEfficiency)
+        ReadOnlySpan<float> output, CubeInfo ci, IMatchEquityTable met, float cubeEfficiency)
     {
         // When the cube is dead (Crawford, DMP, both-can-win), cubeful = cubeless.
         // Port of the fDoCubeful() guard in Cl2CfMatch() from eval.c.
@@ -553,7 +553,7 @@ public static class CubeDecision
     /// Port of Cl2CfMatchCentered() from eval.c.
     /// </summary>
     private static float Cl2CfMatchCentered(
-        ReadOnlySpan<float> output, CubeInfo ci, MatchEquityTable met, float rCubeX)
+        ReadOnlySpan<float> output, CubeInfo ci, IMatchEquityTable met, float rCubeX)
     {
         ComputeGammonRatios(output, out float rG0, out float rBG0, out float rG1, out float rBG1);
 
@@ -609,7 +609,7 @@ public static class CubeDecision
     /// Port of Cl2CfMatchOwned() from eval.c.
     /// </summary>
     private static float Cl2CfMatchOwned(
-        ReadOnlySpan<float> output, CubeInfo ci, MatchEquityTable met, float rCubeX)
+        ReadOnlySpan<float> output, CubeInfo ci, IMatchEquityTable met, float rCubeX)
     {
         ComputeGammonRatios(output, out float rG0, out float rBG0, out float rG1, out float rBG1);
 
@@ -655,7 +655,7 @@ public static class CubeDecision
     /// Port of Cl2CfMatchUnavailable() from eval.c.
     /// </summary>
     private static float Cl2CfMatchUnavailable(
-        ReadOnlySpan<float> output, CubeInfo ci, MatchEquityTable met, float rCubeX)
+        ReadOnlySpan<float> output, CubeInfo ci, IMatchEquityTable met, float rCubeX)
     {
         ComputeGammonRatios(output, out float rG0, out float rBG0, out float rG1, out float rBG1);
 
@@ -746,7 +746,7 @@ public static class CubeDecision
     /// </summary>
     internal static void GetMEMultiple(int score0, int score1, int matchTo,
         int cube, int cubePrime0, int cubePrime1, bool crawford,
-        MatchEquityTable met, float[] player0, float[] player1)
+        IMatchEquityTable met, float[] player0, float[] player1)
     {
         int[] mult = [1, 2, 3, 4, 6];
         int away0 = matchTo - score0 - 1;
@@ -887,7 +887,7 @@ public static class CubeDecision
     /// Returns arCP[0] = cash point for player 0, arCP[1] = cash point for player 1.
     /// </summary>
     internal static void GetPoints(ReadOnlySpan<float> output, CubeInfo ci,
-        MatchEquityTable met, float[] arCP)
+        IMatchEquityTable met, float[] arCP)
     {
         int away0 = ci.MatchTo - ci.Score[0] - 1;
         int away1 = ci.MatchTo - ci.Score[1] - 1;
@@ -1110,7 +1110,7 @@ public static class CubeDecision
     /// Convert standard error from MWC space to equity space.
     /// Port of se_mwc2eq() from eval.c.
     /// </summary>
-    public static float SeMwc2Eq(float seMwc, CubeInfo ci, MatchEquityTable met)
+    public static float SeMwc2Eq(float seMwc, CubeInfo ci, IMatchEquityTable met)
     {
         float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
@@ -1128,7 +1128,7 @@ public static class CubeDecision
     /// Convert standard error from equity space to MWC space.
     /// Port of se_eq2mwc() from eval.c.
     /// </summary>
-    public static float SeEq2Mwc(float seEq, CubeInfo ci, MatchEquityTable met)
+    public static float SeEq2Mwc(float seEq, CubeInfo ci, IMatchEquityTable met)
     {
         float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);

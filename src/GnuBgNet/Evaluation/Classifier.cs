@@ -85,7 +85,7 @@ public static class Classifier
         return PositionClass.Race;
     }
 
-    private static bool IsBearoff(Board board, Bearoff.BearoffDatabase db)
+    private static bool IsBearoff(Board board, Bearoff.IBearoffDatabase db)
     {
         // Check both sides have all checkers within the bearoff range
         for (int side = 0; side < 2; side++)

@@ -18,9 +18,9 @@ namespace GnuBgNet.Rollout;
 /// </summary>
 public sealed class OneSidedRollout
 {
-    private readonly BearoffDatabase? _osBearoff;
+    private readonly IBearoffDatabase? _osBearoff;
 
-    public OneSidedRollout(BearoffDatabase? osBearoff)
+    public OneSidedRollout(IBearoffDatabase? osBearoff)
     {
         _osBearoff = osBearoff;
     }

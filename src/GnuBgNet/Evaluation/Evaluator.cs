@@ -16,20 +16,22 @@ namespace GnuBgNet.Evaluation;
 /// and performs n-ply search with eval caching.
 /// Port of EvaluatePosition/EvaluatePositionFull/EvaluatePositionCache from eval.c.
 /// </summary>
-public sealed class Evaluator
+public sealed class Evaluator : IPositionEvaluator
 {
     private const int MinPruneMoves = 5;
 
     private readonly NetworkSet _nets;
-    private readonly EvalCache _mainCache;
-    private readonly EvalCache _pruneCache;
-    private readonly MatchEquity.MatchEquityTable _met;
+    private readonly IEvalCache _mainCache;
+    private readonly IEvalCache _pruneCache;
+    private readonly IMatchEquityTable _met;
+    private readonly IMoveGenerator _moveGen;
+    private readonly IInputCalculator _inputCalc;
 
-    internal BearoffDatabase? OneSidedBearoff { get; }
-    internal BearoffDatabase? TwoSidedBearoff { get; }
-    internal BearoffDatabase? HypergammonBearoff1 { get; }
-    internal BearoffDatabase? HypergammonBearoff2 { get; }
-    internal BearoffDatabase? HypergammonBearoff3 { get; }
+    internal IBearoffDatabase? OneSidedBearoff { get; }
+    internal IBearoffDatabase? TwoSidedBearoff { get; }
+    internal IBearoffDatabase? HypergammonBearoff1 { get; }
+    internal IBearoffDatabase? HypergammonBearoff2 { get; }
+    internal IBearoffDatabase? HypergammonBearoff3 { get; }
 
     internal bool HasOneSidedBearoff => OneSidedBearoff != null;
     internal bool HasTwoSidedBearoff => TwoSidedBearoff != null;
@@ -37,12 +39,16 @@ public sealed class Evaluator
     internal bool HasHypergammon2 => HypergammonBearoff2 != null;
     internal bool HasHypergammon3 => HypergammonBearoff3 != null;
 
-    public Evaluator(NetworkSet nets, BearoffDatabase? oneSidedBearoff = null,
-        BearoffDatabase? twoSidedBearoff = null,
-        BearoffDatabase? hypergammon1 = null,
-        BearoffDatabase? hypergammon2 = null,
-        BearoffDatabase? hypergammon3 = null,
-        MatchEquity.MatchEquityTable? met = null)
+    public Evaluator(NetworkSet nets, IBearoffDatabase? oneSidedBearoff = null,
+        IBearoffDatabase? twoSidedBearoff = null,
+        IBearoffDatabase? hypergammon1 = null,
+        IBearoffDatabase? hypergammon2 = null,
+        IBearoffDatabase? hypergammon3 = null,
+        IMatchEquityTable? met = null,
+        IEvalCache? mainCache = null,
+        IEvalCache? pruneCache = null,
+        IMoveGenerator? moveGenerator = null,
+        IInputCalculator? inputCalculator = null)
     {
         _nets = nets;
         OneSidedBearoff = oneSidedBearoff;
@@ -51,9 +57,14 @@ public sealed class Evaluator
         HypergammonBearoff2 = hypergammon2;
         HypergammonBearoff3 = hypergammon3;
         _met = met ?? MatchEquity.MatchEquityTable.ComputeDefault();
-        _mainCache = new EvalCache(Constants.CacheSizeMainLog2);
-        _pruneCache = new EvalCache(Constants.CacheSizePruneLog2);
+        _mainCache = mainCache ?? new EvalCache(Constants.CacheSizeMainLog2);
+        _pruneCache = pruneCache ?? new EvalCache(Constants.CacheSizePruneLog2);
+        _moveGen = moveGenerator ?? MoveGeneration.DefaultMoveGenerator.Instance;
+        _inputCalc = inputCalculator ?? NeuralNet.DefaultInputCalculator.Instance;
     }
+
+    /// <inheritdoc />
+    public PositionClass ClassifyPosition(Board board) => Classifier.Classify(board, this);
 
     /// <summary>
     /// Evaluate a position at 0-ply (neural net or bearoff lookup).
@@ -188,7 +199,7 @@ public sealed class Evaluator
     private Board FindBestMoveForRoll(Board board, int n0, int n1, bool usePrune,
         CubeInfo? ci = null, bool cubeful = false)
     {
-        var ml = MoveGenerator.GenerateMoves(board, n0, n1);
+        var ml = _moveGen.GenerateMoves(board, n0, n1);
 
         if (ml.Moves.Count == 0)
             return board.Clone();
@@ -218,7 +229,7 @@ public sealed class Evaluator
     public void FindnSaveBestMoves(MoveList ml, Board board, int nDice0, int nDice1,
         EvalContext ec, MoveFilter[,]? moveFilters = null)
     {
-        MoveGenerator.GenerateMovesInto(ml, board, nDice0, nDice1);
+        _moveGen.GenerateMovesInto(ml, board, nDice0, nDice1);
 
         if (ml.Moves.Count == 0)
             return;
@@ -410,7 +421,7 @@ public sealed class Evaluator
             if (l != EvalCache.CacheHit)
             {
                 float[] inputs = new float[Constants.NumPruningInputs];
-                InputCalculator.BaseInputs(moveBoard, inputs);
+                _inputCalc.BaseInputs(moveBoard, inputs);
 
                 var net = evalClass switch
                 {
@@ -562,7 +573,7 @@ public sealed class Evaluator
     /// Evaluate given a known position class.
     /// Port of leaf evaluation in EvaluatePositionFull.
     /// </summary>
-    internal void EvaluatePositionByClass(Board board, Span<float> output, PositionClass pc)
+    public void EvaluatePositionByClass(Board board, Span<float> output, PositionClass pc)
     {
         switch (pc)
         {
@@ -605,7 +616,7 @@ public sealed class Evaluator
     private void EvalRace(Board board, Span<float> output)
     {
         Span<float> inputs = stackalloc float[Constants.NumRaceInputs];
-        InputCalculator.CalculateRaceInputs(board, inputs);
+        _inputCalc.CalculateRaceInputs(board, inputs);
         _nets.Race.Evaluate(inputs, output);
 
         // Special evaluation of backgammons overrides net output
@@ -757,14 +768,14 @@ public sealed class Evaluator
     private void EvalContact(Board board, Span<float> output)
     {
         float[] inputs = new float[Constants.NumContactInputs];
-        InputCalculator.CalculateContactInputs(board, inputs);
+        _inputCalc.CalculateContactInputs(board, inputs);
         _nets.Contact.Evaluate(inputs, output);
     }
 
     private void EvalCrashed(Board board, Span<float> output)
     {
         float[] inputs = new float[Constants.NumCrashedInputs];
-        InputCalculator.CalculateCrashedInputs(board, inputs);
+        _inputCalc.CalculateCrashedInputs(board, inputs);
         _nets.Crashed.Evaluate(inputs, output);
     }
 
@@ -1392,7 +1403,7 @@ public sealed class Evaluator
     /// Port of GetECF3() from eval.c.
     /// </summary>
     internal static void GetEcf3(float[] arCubeful, int cci, float[] arCf, CubeInfo[] aci,
-        MatchEquity.MatchEquityTable met)
+        IMatchEquityTable met)
     {
         for (int ici = 0, i = 0; ici < cci; ici++, i += 2)
         {

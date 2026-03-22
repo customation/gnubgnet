@@ -18,7 +18,7 @@ public enum BearoffType
 /// Loads and queries gnubg bearoff databases (.bd files).
 /// Port of bearoffcontext from bearoff.c.
 /// </summary>
-public sealed class BearoffDatabase
+public sealed class BearoffDatabase : IBearoffDatabase
 {
     private const int HeaderSize = 40;
 

@@ -11,7 +11,7 @@ namespace GnuBgNet.Evaluation;
 /// 2-way set-associative evaluation cache with MurmurHash3.
 /// Port of evalCache from lib/cache.c.
 /// </summary>
-public sealed class EvalCache
+public sealed class EvalCache : IEvalCache
 {
     public const uint CacheHit = uint.MaxValue;
 

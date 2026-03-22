@@ -27,7 +27,7 @@ public static class Resignation
     /// Returns 0 (no resign), 1 (normal), 2 (gammon), or 3 (backgammon).
     /// </summary>
     public static int GetResignation(ReadOnlySpan<float> arResign, CubeInfo ci,
-        MatchEquityTable? met = null)
+        IMatchEquityTable? met = null)
     {
         float rPlay = Utility(arResign, ci, met);
 
@@ -76,7 +76,7 @@ public static class Resignation
     /// </summary>
     public static void GetResignEquities(ReadOnlySpan<float> arResign, CubeInfo ci,
         int nResigned, out float equityBefore, out float equityAfter,
-        MatchEquityTable? met = null)
+        IMatchEquityTable? met = null)
     {
         equityBefore = Utility(arResign, ci, met);
 
@@ -97,7 +97,7 @@ public static class Resignation
     /// Returns the acceptable resignation level (1-3) or 0 if resignation should be rejected.
     /// </summary>
     public static int CheckResignation(ReadOnlySpan<float> arResign, CubeInfo ci,
-        int nResigned, MatchEquityTable? met = null, float maxCost = 0.05f)
+        int nResigned, IMatchEquityTable? met = null, float maxCost = 0.05f)
     {
         float equityBefore = Utility(arResign, ci, met);
 
@@ -120,7 +120,7 @@ public static class Resignation
     /// For match play: uses gammon prices from CubeInfo.
     /// </summary>
     internal static float Utility(ReadOnlySpan<float> output, CubeInfo ci,
-        MatchEquityTable? met = null)
+        IMatchEquityTable? met = null)
     {
         float eq = output[Constants.OutputWin] * 2.0f - 1.0f;
 

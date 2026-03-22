@@ -12,7 +12,7 @@ namespace GnuBgNet.NeuralNet;
 /// A 3-layer feedforward neural network: input → hidden (sigmoid) → output (sigmoid).
 /// Port of the neuralnet struct and evaluation functions from neuralnet.c.
 /// </summary>
-public sealed class NeuralNetwork
+public sealed class NeuralNetwork : INeuralNetwork
 {
     public int InputCount { get; }
     public int HiddenCount { get; }
