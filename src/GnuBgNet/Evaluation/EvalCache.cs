@@ -187,8 +187,8 @@ public sealed class EvalCache : IEvalCache
             if (ci.MatchTo > 0)
             {
                 key ^=
-                    ((ci.MatchTo - ci.Score[ci.Move] - 1) << 7) ^
-                    ((ci.MatchTo - ci.Score[1 - ci.Move] - 1) << 13) ^
+                    ((ci.MatchTo - ci.GetScore(ci.Move) - 1) << 7) ^
+                    ((ci.MatchTo - ci.GetScore(1 - ci.Move) - 1) << 13) ^
                     (LogCube(ci.Cube) << 19) ^
                     ((ci.CubeOwner < 0 ? 2 : (ci.CubeOwner == ci.Move ? 1 : 0)) << 23) ^
                     ((ci.Crawford ? 1 : 0) << 25);

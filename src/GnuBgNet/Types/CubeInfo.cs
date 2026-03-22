@@ -2,10 +2,14 @@
 // Copyright (C) 2000-2014 the AUTHORS
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Runtime.CompilerServices;
+
 namespace GnuBgNet;
 
 /// <summary>
 /// Cube and match state used for equity calculations.
+/// Port of cubeinfo from eval.h — in C this is a stack struct with
+/// int anScore[2] inline; we use Score0/Score1 to avoid heap arrays.
 /// </summary>
 public sealed class CubeInfo
 {
@@ -21,8 +25,15 @@ public sealed class CubeInfo
     /// <summary>Match length. 0 = money game.</summary>
     public int MatchTo { get; set; }
 
-    /// <summary>Current scores [player0, player1].</summary>
-    public int[] Score { get; set; } = [0, 0];
+    /// <summary>Score for player 0.</summary>
+    public int Score0 { get; set; }
+
+    /// <summary>Score for player 1.</summary>
+    public int Score1 { get; set; }
+
+    /// <summary>Get score by player index (0 or 1).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int GetScore(int player) => player == 0 ? Score0 : Score1;
 
     /// <summary>Crawford rule in effect.</summary>
     public bool Crawford { get; set; }
@@ -46,7 +57,8 @@ public sealed class CubeInfo
         CubeOwner = -1,
         Move = 0,
         MatchTo = 0,
-        Score = [0, 0],
+        Score0 = 0,
+        Score1 = 0,
         Crawford = false,
         Jacoby = false,
         Beavers = true,

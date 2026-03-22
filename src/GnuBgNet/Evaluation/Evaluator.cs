@@ -156,7 +156,7 @@ public sealed class Evaluator : IPositionEvaluator
                 CubeOwner = ci.CubeOwner,
                 Move = 1 - ci.Move,
                 MatchTo = ci.MatchTo,
-                Score = (int[])ci.Score.Clone(),
+                Score0 = ci.Score0, Score1 = ci.Score1,
                 Crawford = ci.Crawford,
                 Jacoby = ci.Jacoby,
                 Beavers = ci.Beavers,
@@ -217,10 +217,17 @@ public sealed class Evaluator : IPositionEvaluator
         var ml = _moveGen.GenerateMoves(board, n0, n1);
 
         if (ml.Moves.Count == 0)
+        {
+            _moveGen.ReturnMoves(ml);
             return board.Clone();
+        }
 
         if (ml.Moves.Count == 1)
-            return PositionId.FromKey(ml.Moves[0].Key);
+        {
+            var key = ml.Moves[0].Key;
+            _moveGen.ReturnMoves(ml);
+            return PositionId.FromKey(key);
+        }
 
         int pruneMoves = MinPruneMoves + FloorLog2(ml.Moves.Count);
 
@@ -229,11 +236,17 @@ public sealed class Evaluator : IPositionEvaluator
             if (TryScoreWithPruningNets(ml, board, ci))
             {
                 var candidates = SelectTopMoves(ml, pruneMoves);
-                return PositionId.FromKey(FindBestKeyFromCandidates(candidates, ci, cubeful));
+                var bestKey = FindBestKeyFromCandidates(candidates, ci, cubeful);
+                _moveGen.ReturnMoves(ml);
+                return PositionId.FromKey(bestKey);
             }
         }
 
-        return PositionId.FromKey(FindBestKeyFromAll(ml, ci, cubeful));
+        {
+            var bestKey = FindBestKeyFromAll(ml, ci, cubeful);
+            _moveGen.ReturnMoves(ml);
+            return PositionId.FromKey(bestKey);
+        }
     }
 
     /// <summary>
@@ -341,7 +354,7 @@ public sealed class Evaluator : IPositionEvaluator
                 CubeOwner = ci.CubeOwner,
                 Move = 1 - ci.Move,
                 MatchTo = ci.MatchTo,
-                Score = (int[])ci.Score.Clone(),
+                Score0 = ci.Score0, Score1 = ci.Score1,
                 Crawford = ci.Crawford,
                 Jacoby = ci.Jacoby,
                 Beavers = ci.Beavers,
@@ -418,7 +431,7 @@ public sealed class Evaluator : IPositionEvaluator
             CubeOwner = ci.CubeOwner,
             Move = 1 - ci.Move,
             MatchTo = ci.MatchTo,
-            Score = (int[])ci.Score.Clone(),
+            Score0 = ci.Score0, Score1 = ci.Score1,
             Crawford = ci.Crawford,
             Jacoby = ci.Jacoby,
             Beavers = ci.Beavers,
@@ -1254,7 +1267,7 @@ public sealed class Evaluator : IPositionEvaluator
                 CubeOwner = pciMove.CubeOwner,
                 Move = 1 - pciMove.Move,
                 MatchTo = pciMove.MatchTo,
-                Score = (int[])pciMove.Score.Clone(),
+                Score0 = pciMove.Score0, Score1 = pciMove.Score1,
                 Crawford = pciMove.Crawford,
                 Jacoby = pciMove.Jacoby,
                 Beavers = pciMove.Beavers,
@@ -1409,7 +1422,7 @@ public sealed class Evaluator : IPositionEvaluator
                     CubeOwner = aciCubePos[ici].CubeOwner,
                     Move = fInvert ? 1 - aciCubePos[ici].Move : aciCubePos[ici].Move,
                     MatchTo = aciCubePos[ici].MatchTo,
-                    Score = (int[])aciCubePos[ici].Score.Clone(),
+                    Score0 = aciCubePos[ici].Score0, Score1 = aciCubePos[ici].Score1,
                     Crawford = aciCubePos[ici].Crawford,
                     Jacoby = aciCubePos[ici].Jacoby,
                     Beavers = aciCubePos[ici].Beavers,
@@ -1432,7 +1445,7 @@ public sealed class Evaluator : IPositionEvaluator
                     CubeOwner = 1 - aciCubePos[ici].Move,
                     Move = fInvert ? 1 - aciCubePos[ici].Move : aciCubePos[ici].Move,
                     MatchTo = aciCubePos[ici].MatchTo,
-                    Score = (int[])aciCubePos[ici].Score.Clone(),
+                    Score0 = aciCubePos[ici].Score0, Score1 = aciCubePos[ici].Score1,
                     Crawford = aciCubePos[ici].Crawford,
                     Jacoby = aciCubePos[ici].Jacoby,
                     Beavers = aciCubePos[ici].Beavers,

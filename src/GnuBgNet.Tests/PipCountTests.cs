@@ -205,8 +205,8 @@ public class EvalKeyTests
     [Fact]
     public void ComputeEvalKey_MatchPlay_EncodesScore()
     {
-        var ci1 = new CubeInfo { MatchTo = 7, Score = [2, 3], Move = 0, Cube = 1, CubeOwner = -1 };
-        var ci2 = new CubeInfo { MatchTo = 7, Score = [3, 2], Move = 0, Cube = 1, CubeOwner = -1 };
+        var ci1 = new CubeInfo { MatchTo = 7, Score0 = 2, Score1 = 3, Move = 0, Cube = 1, CubeOwner = -1 };
+        var ci2 = new CubeInfo { MatchTo = 7, Score0 = 3, Score1 = 2, Move = 0, Cube = 1, CubeOwner = -1 };
 
         int key1 = EvalCache.ComputeEvalKey(2, true, true, ci1, false);
         int key2 = EvalCache.ComputeEvalKey(2, true, true, ci2, false);
@@ -217,7 +217,7 @@ public class EvalKeyTests
     [Fact]
     public void ComputeEvalKey_CubefulEquity_DiffersFromNot()
     {
-        var ci = new CubeInfo { MatchTo = 7, Score = [2, 3], Move = 0, Cube = 2, CubeOwner = 0 };
+        var ci = new CubeInfo { MatchTo = 7, Score0 = 2, Score1 = 3, Move = 0, Cube = 2, CubeOwner = 0 };
 
         int key1 = EvalCache.ComputeEvalKey(0, true, false, ci, false);
         int key2 = EvalCache.ComputeEvalKey(0, true, false, ci, true);

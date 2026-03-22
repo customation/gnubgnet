@@ -51,7 +51,7 @@ public class NativeVsManagedBenchmarks
             PruneRace = new SimdNeuralNetwork((NeuralNetwork)nets.PruneRace),
         };
         _managedOptimized = Engine.Create(_dataDir, simdNets,
-            moveGenerator: UndoStackMoveGenerator.Instance,
+            moveGenerator: PoolingMoveGenerator.Instance,
             inputCalculator: SparseInputCalculator.Instance);
 
         // Native C engine

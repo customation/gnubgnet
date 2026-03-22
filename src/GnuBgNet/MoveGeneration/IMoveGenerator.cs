@@ -13,4 +13,10 @@ public interface IMoveGenerator
     void GenerateMovesInto(MoveList ml, Board board, int n0, int n1);
     Board ApplyMove(Board board, Move move);
     Board ApplyMoveAndSwap(Board board, Move move);
+
+    /// <summary>
+    /// Return a MoveList and its Move objects to the pool for reuse.
+    /// Default implementation is a no-op for non-pooling generators.
+    /// </summary>
+    void ReturnMoves(MoveList ml) { }
 }

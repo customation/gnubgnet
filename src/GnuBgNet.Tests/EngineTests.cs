@@ -440,7 +440,7 @@ public class CubeDecisionTests
             CubeOwner = -1,
             Move = 0,
             MatchTo = 7,
-            Score = [0, 0],
+            Score0 = 0, Score1 = 0,
             Crawford = false,
         };
 
@@ -465,7 +465,7 @@ public class CubeDecisionTests
             CubeOwner = -1,
             Move = 0,
             MatchTo = 5,
-            Score = [4, 3],  // 1-away, 2-away Crawford
+            Score0 = 4, Score1 = 3,  // 1-away, 2-away Crawford
             Crawford = true,
         };
 
@@ -488,7 +488,7 @@ public class CubeDecisionTests
             CubeOwner = -1,
             Move = 1,           // player 1 on roll
             MatchTo = 5,
-            Score = [4, 3],     // player 0 is 1-away, player 1 is 2-away
+            Score0 = 4, Score1 = 3,     // player 0 is 1-away, player 1 is 2-away
             Crawford = false,   // post-Crawford
         };
 
@@ -512,7 +512,7 @@ public class CubeDecisionTests
             CubeOwner = 0,  // player 0 owns cube
             Move = 0,
             MatchTo = 9,
-            Score = [2, 3],
+            Score0 = 2, Score1 = 3,
         };
 
         var result = engine.AnalyseCubeDecision(board, ci);

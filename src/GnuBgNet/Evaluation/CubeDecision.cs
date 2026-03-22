@@ -175,7 +175,7 @@ public static class CubeDecision
             CubeOwner = 1 - ci.Move,
             Move = ci.Move,
             MatchTo = ci.MatchTo,
-            Score = (int[])ci.Score.Clone(),
+            Score0 = ci.Score0, Score1 = ci.Score1,
             Crawford = ci.Crawford,
             Jacoby = ci.Jacoby,
             Beavers = ci.Beavers,
@@ -231,15 +231,15 @@ public static class CubeDecision
         }
 
         bool postCrawford = !ci.Crawford &&
-            (ci.Score[0] == ci.MatchTo - 1 || ci.Score[1] == ci.MatchTo - 1);
+            (ci.Score0 == ci.MatchTo - 1 || ci.Score1 == ci.MatchTo - 1);
 
         bool canDouble = !ci.Crawford &&
-            ci.Score[ci.Move] + ci.Cube < ci.MatchTo &&
-            !(postCrawford && ci.Score[ci.Move] == ci.MatchTo - 1) &&
+            ci.GetScore(ci.Move) + ci.Cube < ci.MatchTo &&
+            !(postCrawford && ci.GetScore(ci.Move) == ci.MatchTo - 1) &&
             (ci.CubeOwner == -1 || ci.CubeOwner == ci.Move);
 
         dpEquity = met != null
-            ? GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            ? GetME(ci.Score0, ci.Score1, ci.MatchTo,
                 ci.Move, ci.Cube, ci.Move, ci.Crawford, met)
             : 1.0f;
 
@@ -359,11 +359,11 @@ public static class CubeDecision
         if (ci.MatchTo == 0) return false;
 
         // Both players can win match with current cube value
-        if (ci.Score[0] + ci.Cube >= ci.MatchTo && ci.Score[1] + ci.Cube >= ci.MatchTo)
+        if (ci.Score0 + ci.Cube >= ci.MatchTo && ci.Score1 + ci.Cube >= ci.MatchTo)
             return true;
 
         // Score is -2,-2 (both 2-away)
-        if (ci.Score[0] == ci.MatchTo - 2 && ci.Score[1] == ci.MatchTo - 2)
+        if (ci.Score0 == ci.MatchTo - 2 && ci.Score1 == ci.MatchTo - 2)
             return true;
 
         // Crawford game — cube is dead
@@ -408,17 +408,17 @@ public static class CubeDecision
         // Uses center formulation: gammon prices are "twice the usual value".
         int cube = ci.Cube;
 
-        float rWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float rWin = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             0, cube, 0, ci.Crawford, met);
-        float rWinGammon = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float rWinGammon = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             0, 2 * cube, 0, ci.Crawford, met);
-        float rWinBG = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float rWinBG = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             0, 3 * cube, 0, ci.Crawford, met);
-        float rLose = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float rLose = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             0, cube, 1, ci.Crawford, met);
-        float rLoseGammon = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float rLoseGammon = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             0, 2 * cube, 1, ci.Crawford, met);
-        float rLoseBG = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float rLoseBG = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             0, 3 * cube, 1, ci.Crawford, met);
 
         float rCenter = (rWin + rLose) / 2.0f;
@@ -491,7 +491,7 @@ public static class CubeDecision
     /// </summary>
     private static float GetDoublePassMwc(CubeInfo ci, IMatchEquityTable met)
     {
-        return GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        return GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
     }
 
@@ -501,9 +501,9 @@ public static class CubeDecision
     /// </summary>
     internal static float Eq2Mwc(float eq, CubeInfo ci, IMatchEquityTable met)
     {
-        float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcWin = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
-        float mwcLose = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcLose = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, 1 - ci.Move, ci.Crawford, met);
 
         return 0.5f * (eq * (mwcWin - mwcLose) + (mwcWin + mwcLose));
@@ -515,9 +515,9 @@ public static class CubeDecision
     /// </summary>
     internal static float Mwc2Eq(float mwc, CubeInfo ci, IMatchEquityTable met)
     {
-        float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcWin = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
-        float mwcLose = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcLose = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, 1 - ci.Move, ci.Crawford, met);
 
         float denom = mwcWin - mwcLose;
@@ -566,7 +566,7 @@ public static class CubeDecision
         // Get MWC for basic outcomes at current cube level
         float[] p0 = new float[MET_DTLBP1 + 1];
         float[] p1 = new float[MET_DTLBP1 + 1];
-        GetMEMultiple(ci.Score[0], ci.Score[1], ci.MatchTo,
+        GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Cube, -1, -1, ci.Crawford, met, p0, p1);
 
         float[] res = ci.Move == 0 ? p0 : p1;
@@ -620,7 +620,7 @@ public static class CubeDecision
 
         float[] p0 = new float[MET_DTLBP1 + 1];
         float[] p1 = new float[MET_DTLBP1 + 1];
-        GetMEMultiple(ci.Score[0], ci.Score[1], ci.MatchTo,
+        GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Cube, -1, -1, ci.Crawford, met, p0, p1);
 
         float[] res = ci.Move == 0 ? p0 : p1;
@@ -666,7 +666,7 @@ public static class CubeDecision
 
         float[] p0 = new float[MET_DTLBP1 + 1];
         float[] p1 = new float[MET_DTLBP1 + 1];
-        GetMEMultiple(ci.Score[0], ci.Score[1], ci.MatchTo,
+        GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Cube, -1, -1, ci.Crawford, met, p0, p1);
 
         float[] res = ci.Move == 0 ? p0 : p1;
@@ -889,8 +889,8 @@ public static class CubeDecision
     internal static void GetPoints(ReadOnlySpan<float> output, CubeInfo ci,
         IMatchEquityTable met, float[] arCP)
     {
-        int away0 = ci.MatchTo - ci.Score[0] - 1;
-        int away1 = ci.MatchTo - ci.Score[1] - 1;
+        int away0 = ci.MatchTo - ci.Score0 - 1;
+        int away1 = ci.MatchTo - ci.Score1 - 1;
         int cube = ci.Cube;
 
         // Compute gammon ratios — note that GetPoints computes based on fMove
@@ -946,7 +946,7 @@ public static class CubeDecision
             int cp0 = GetCubePrimeValue(away0, away1, cubeValue);
             int cp1 = GetCubePrimeValue(away1, away0, cubeValue);
 
-            GetMEMultiple(ci.Score[0], ci.Score[1], ci.MatchTo,
+            GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
                 cubeValue, cp0, cp1, ci.Crawford, met, p0, p1);
 
             for (int k = 0; k < 2; k++)
@@ -1112,9 +1112,9 @@ public static class CubeDecision
     /// </summary>
     public static float SeMwc2Eq(float seMwc, CubeInfo ci, IMatchEquityTable met)
     {
-        float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcWin = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
-        float mwcLose = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcLose = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, 1 - ci.Move, ci.Crawford, met);
 
         float denom = mwcWin - mwcLose;
@@ -1130,9 +1130,9 @@ public static class CubeDecision
     /// </summary>
     public static float SeEq2Mwc(float seEq, CubeInfo ci, IMatchEquityTable met)
     {
-        float mwcWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcWin = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, ci.Move, ci.Crawford, met);
-        float mwcLose = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+        float mwcLose = GetME(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Move, ci.Cube, 1 - ci.Move, ci.Crawford, met);
 
         return (mwcWin - mwcLose) / 2.0f * seEq;
