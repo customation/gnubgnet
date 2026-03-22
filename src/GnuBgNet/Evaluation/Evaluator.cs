@@ -96,7 +96,7 @@ public sealed class Evaluator : IPositionEvaluator
     public void EvaluatePositionPlied(Board board, Span<float> output, int nPlies, bool usePrune, EvalContext? ec,
         CubeInfo? ci = null)
     {
-        bool hasNoise = ec != null && ec.Noise != 0.0f;
+        bool hasNoise = ec != null && ec.Value.Noise != 0.0f;
 
         if (!hasNoise)
         {
@@ -181,11 +181,11 @@ public sealed class Evaluator : IPositionEvaluator
             EvaluatePositionByClass(board, output, pc);
 
             // Apply noise at leaf nodes (matching C: pec->rNoise check after acef[pc]())
-            if (ec != null && ec.Noise > 0.0f && pc != PositionClass.Over)
+            if (ec != null && ec.Value.Noise > 0.0f && pc != PositionClass.Over)
             {
                 for (int i = 0; i < Constants.NumOutputs; i++)
                 {
-                    output[i] += Noise(ec, board, i);
+                    output[i] += Noise(ec.Value, board, i);
                     output[i] = Math.Clamp(output[i], 0.0f, 1.0f);
                 }
             }
@@ -370,8 +370,11 @@ public sealed class Evaluator : IPositionEvaluator
 
         arEval.Slice(0, Constants.NumRolloutOutputs).CopyTo(move.EvalOutputs);
 
-        move.MoveEvalSetup.Type = EvalType.Eval;
-        move.MoveEvalSetup.Context = new EvalContext { Plies = nPlies, Cubeful = cubeful };
+        move.MoveEvalSetup = new EvalSetup
+        {
+            Type = EvalType.Eval,
+            Context = new EvalContext { Plies = nPlies, Cubeful = cubeful },
+        };
 
         move.Score = cubeful
             ? arEval[Constants.OutputCubefulEquity]
@@ -1096,8 +1099,9 @@ public sealed class Evaluator : IPositionEvaluator
         if (ec.Cubeful)
         {
             float rCubeful = 0;
+            CubeInfo[] aciSpan = [ci];
             EvaluatePositionCubeful3(board, arOutput, ref rCubeful,
-                [ci], 1, ci, ec, nPlies, false);
+                aciSpan, 1, ci, ec, nPlies, false);
 
             arOutput[Constants.OutputEquity] = ci.MatchTo > 0
                 ? CubeDecision.UtilityMatch(arOutput, ci,
@@ -1122,7 +1126,7 @@ public sealed class Evaluator : IPositionEvaluator
     /// </summary>
     internal void EvaluatePositionCubeful3(
         Board board, Span<float> arOutput, ref float cubeful,
-        CubeInfo[] aciCubePos, int cci, CubeInfo pciMove,
+        ReadOnlySpan<CubeInfo> aciCubePos, int cci, CubeInfo pciMove,
         EvalContext ec, int nPlies, bool fTop)
     {
         // For simplicity, skip cache for now and go directly to evaluation
@@ -1137,7 +1141,7 @@ public sealed class Evaluator : IPositionEvaluator
     /// </summary>
     internal void EvaluatePositionCubeful3Multi(
         Board board, Span<float> arOutput, Span<float> arCubeful,
-        CubeInfo[] aciCubePos, int cci, CubeInfo pciMove,
+        ReadOnlySpan<CubeInfo> aciCubePos, int cci, CubeInfo pciMove,
         EvalContext ec, int nPlies, bool fTop)
     {
         // Check cache for each cube position
@@ -1192,7 +1196,7 @@ public sealed class Evaluator : IPositionEvaluator
     /// </summary>
     internal void EvaluatePositionCubeful4(
         Board board, Span<float> arOutput, Span<float> arCubeful,
-        CubeInfo[] aciCubePos, int cci, CubeInfo pciMove,
+        ReadOnlySpan<CubeInfo> aciCubePos, int cci, CubeInfo pciMove,
         EvalContext ec, int nPlies, bool fTop)
     {
         var pc = Classifier.Classify(board, this);
@@ -1362,8 +1366,8 @@ public sealed class Evaluator : IPositionEvaluator
     /// For each input cube position, creates two output positions:
     /// [i*2] = no-double (same cube), [i*2+1] = double (2x cube, opponent owns).
     /// </summary>
-    internal static void MakeCubePos(CubeInfo[] aciCubePos, int cci, bool fTop,
-        CubeInfo[] aci, bool fInvert)
+    internal static void MakeCubePos(ReadOnlySpan<CubeInfo> aciCubePos, int cci, bool fTop,
+        Span<CubeInfo> aci, bool fInvert)
     {
         int idx = 0;
         for (int ici = 0; ici < cci; ici++)
@@ -1419,7 +1423,7 @@ public sealed class Evaluator : IPositionEvaluator
     /// Select best cube action from recursive cubeful equity results.
     /// Port of GetECF3() from eval.c.
     /// </summary>
-    internal static void GetEcf3(Span<float> arCubeful, int cci, Span<float> arCf, CubeInfo[] aci,
+    internal static void GetEcf3(Span<float> arCubeful, int cci, Span<float> arCf, ReadOnlySpan<CubeInfo> aci,
         IMatchEquityTable met)
     {
         for (int ici = 0, i = 0; ici < cci; ici++, i += 2)

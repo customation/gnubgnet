@@ -9,7 +9,7 @@ namespace GnuBgNet;
 /// Evaluation context controlling search depth and noise.
 /// Port of evalcontext from eval.h.
 /// </summary>
-public sealed class EvalContext
+public struct EvalContext
 {
     /// <summary>Whether to compute cubeful equity.</summary>
     public bool Cubeful { get; set; }
@@ -21,7 +21,7 @@ public sealed class EvalContext
     public bool UsePrune { get; set; }
 
     /// <summary>Deterministic evaluation (MD5-based noise, reproducible).</summary>
-    public bool Deterministic { get; set; } = true;
+    public bool Deterministic { get; set; }
 
     /// <summary>Standard deviation of noise added to evaluations (0 = no noise).</summary>
     public float Noise { get; set; }
@@ -29,16 +29,6 @@ public sealed class EvalContext
     public static EvalContext ZeroPly() => new() { Plies = 0, Cubeful = true, Deterministic = true };
 
     public static EvalContext WorldClass() => new() { Plies = 2, Cubeful = true, UsePrune = true, Deterministic = true };
-
-    /// <summary>Clone this context.</summary>
-    public EvalContext Clone() => new()
-    {
-        Cubeful = Cubeful,
-        Plies = Plies,
-        UsePrune = UsePrune,
-        Deterministic = Deterministic,
-        Noise = Noise,
-    };
 }
 
 /// <summary>
@@ -56,8 +46,14 @@ public enum EvalType
 /// Evaluation setup: combines evaluation type with context.
 /// Port of evalsetup from eval.h.
 /// </summary>
-public sealed class EvalSetup
+public struct EvalSetup
 {
-    public EvalType Type { get; set; } = EvalType.Eval;
-    public EvalContext Context { get; set; } = new();
+    public EvalType Type { get; set; }
+    public EvalContext Context { get; set; }
+
+    public EvalSetup()
+    {
+        Type = EvalType.Eval;
+        Context = default;
+    }
 }

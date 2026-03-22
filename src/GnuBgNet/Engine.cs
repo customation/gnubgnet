@@ -191,7 +191,7 @@ public sealed class Engine : IDisposable
     private EvaluationResult BuildEvaluationResult(Board board, CubeInfo ci, int plies)
     {
         // First evaluation: cubeless (matches C: GeneralEvaluationE with ecBasic)
-        float[] output = new float[Constants.NumOutputs];
+        Span<float> output = stackalloc float[Constants.NumOutputs];
         if (plies > 0)
             _evaluator.EvaluatePositionPlied(board, output, plies, true, null, ci);
         else
@@ -209,7 +209,7 @@ public sealed class Engine : IDisposable
             UsePrune = true,
             Deterministic = true,
         };
-        float[] arCubeful = new float[Constants.NumRolloutOutputs];
+        Span<float> arCubeful = stackalloc float[Constants.NumRolloutOutputs];
         _evaluator.GeneralEvaluationEPlied(board, arCubeful, ci, ec, plies);
 
         return new EvaluationResult(
@@ -411,7 +411,7 @@ public sealed class Engine : IDisposable
     {
         ec ??= EvalContext.WorldClass();
         var ml = new MoveList();
-        _evaluator.FindnSaveBestMoves(ml, board, die1, die2, ec, moveFilters);
+        _evaluator.FindnSaveBestMoves(ml, board, die1, die2, ec.Value, moveFilters);
 
         var result = new List<ScoredMove>(ml.Moves.Count);
         foreach (var move in ml.Moves)
