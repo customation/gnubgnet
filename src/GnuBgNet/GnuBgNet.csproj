@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="GnuBgNet.Tests" />
+    <InternalsVisibleTo Include="GnuBgNet.Gpu" />
+    <InternalsVisibleTo Include="GnuBgNet.Benchmarks" />
   </ItemGroup>
 
 </Project>
