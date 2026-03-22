@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GnuBgNet\GnuBgNet.csproj" />
+    <ProjectReference Include="..\..\..\gnubgapi\src\GammonBase.GnuBgApi\GammonBase.GnuBgApi.csproj" />
   </ItemGroup>
 
 </Project>

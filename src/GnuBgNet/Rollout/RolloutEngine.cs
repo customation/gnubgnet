@@ -226,16 +226,20 @@ public sealed class RolloutEngine
     /// Run a single rollout trial: alternating moves until game over or truncation.
     /// Returns 7 values: 5 probabilities + cubeless equity + cubeful equity.
     /// Port of BasicCubefulRollout from rollout.c.
-    /// When settings.Cubeful is true, cube decisions (double/take/pass) are made
-    /// at each turn using GeneralCubeDecisionE + FindCubeDecision.
+    ///
+    /// Board convention (matching C): board is ALWAYS from the current player's
+    /// perspective. board.Player[] = player on roll (anBoard[1] in C),
+    /// board.Opponent[] = their opponent (anBoard[0] in C).
+    /// After each move, SwapSides so the next player sees the board from their side.
+    /// iTurn tracks the half-move count; (iTurn &amp; 1) != 0 means the result must
+    /// be inverted back to player 0's perspective at every exit point.
     /// </summary>
     private double[] RunSingleTrial(Board startBoard, MersenneTwister rng,
         int truncPlies, int chequerPlies, RolloutSettings settings, float[] output,
         uint trialIndex, DicePermutations? perms = null)
     {
         var board = startBoard.Clone();
-        int ply = 0;
-        bool playerOnRoll = true;
+        int iTurn = 0;
         double[] varRedn = settings.VarianceReduction ? new double[7] : null!;
         int skip = 0; // quasi-random skip counter
 
@@ -248,29 +252,62 @@ public sealed class RolloutEngine
         // Port of: int nLateEvals = prc->fLateEvals ? prc->nLate : 0x7fffffff;
         int nLateEvals = settings.LateEvals ? settings.LateMoveThreshold : int.MaxValue;
 
-        while (ply < truncPlies)
+        while (iTurn < truncPlies)
         {
             // Determine effective chequer and cube plies based on late eval threshold.
             // Port of pecCube/pecChequer selection from rollout.c lines 416-426.
-            int effectiveChequerPlies = ply < nLateEvals ? chequerPlies : settings.ChequerPliesLate;
-            int effectiveCubePlies = ply < nLateEvals ? settings.CubePlies : settings.CubePliesLate;
+            int effectiveChequerPlies = iTurn < nLateEvals ? chequerPlies : settings.ChequerPliesLate;
+            int effectiveCubePlies = iTurn < nLateEvals ? settings.CubePlies : settings.CubePliesLate;
+            int fMove = iTurn & 1; // 0 = player 0 on roll, 1 = player 1 on roll
 
-            // Check for game over
-            if (IsGameOver(board, playerOnRoll, out var gameOverResult))
+            // Check for game over.
+            // Board is from current player's perspective; Classify + EvalOver give
+            // the result from the current player's perspective.  Invert if odd turn.
+            var pc = Classifier.Classify(board, _evaluator);
+            if (pc == PositionClass.Over)
             {
-                // Scale cubeful equity by cube multiplier
-                if (settings.Cubeful)
-                    gameOverResult[6] *= (double)cubeValue / nBasisCube;
+                _evaluator.EvaluatePositionByClass(board, output, pc);
+                if (fMove != 0)
+                    Evaluator.InvertEvaluation(output);
+
+                float eq = MatchEquityTable.MoneyEquity(output);
+                double cubefulEq = settings.Cubeful ? eq * (double)cubeValue / nBasisCube : eq;
+                double[] gameOverResult =
+                [
+                    output[Constants.OutputWin],
+                    output[Constants.OutputWinGammon],
+                    output[Constants.OutputWinBackgammon],
+                    output[Constants.OutputLoseGammon],
+                    output[Constants.OutputLoseBackgammon],
+                    eq,
+                    cubefulEq,
+                ];
                 if (settings.VarianceReduction)
                     ApplyVarianceReduction(gameOverResult, varRedn);
                 return gameOverResult;
             }
 
-            // Bearoff truncation
-            if (TryBearoffTruncation(board, playerOnRoll, settings, output, out var bearoffResult))
+            // Bearoff truncation: evaluate from current player's perspective,
+            // invert to player 0 if odd turn.
+            if ((settings.TruncateBearoff2 && pc == PositionClass.BearoffTwoSided) ||
+                (settings.TruncateBearoffOS && pc == PositionClass.BearoffOneSided))
             {
-                if (settings.Cubeful)
-                    bearoffResult[6] *= (double)cubeValue / nBasisCube;
+                _evaluator.EvaluatePositionByClass(board, output, pc);
+                if (fMove != 0)
+                    Evaluator.InvertEvaluation(output);
+
+                float eq = MatchEquityTable.MoneyEquity(output);
+                double cubefulEq = settings.Cubeful ? eq * (double)cubeValue / nBasisCube : eq;
+                double[] bearoffResult =
+                [
+                    output[Constants.OutputWin],
+                    output[Constants.OutputWinGammon],
+                    output[Constants.OutputWinBackgammon],
+                    output[Constants.OutputLoseGammon],
+                    output[Constants.OutputLoseBackgammon],
+                    eq,
+                    cubefulEq,
+                ];
                 if (settings.VarianceReduction)
                     ApplyVarianceReduction(bearoffResult, varRedn);
                 return bearoffResult;
@@ -278,32 +315,84 @@ public sealed class RolloutEngine
 
             // Cubeful play-out: evaluate cube decision before rolling dice.
             // Port of rollout.c line 471: suppress cube on turn 0 when fInitial is set.
-            bool allowCube = ply > 0 || !settings.Initial;
+            bool allowCube = iTurn > 0 || !settings.Initial;
             if (settings.Cubeful && allowCube)
             {
-                bool canDouble = cubeOwner == -1 || (playerOnRoll && cubeOwner == 0) || (!playerOnRoll && cubeOwner == 1);
+                // Current player can double if cube is centered or they own it.
+                // cubeOwner is absolute (0/1/-1); canDouble when cubeOwner == fMove.
+                bool canDouble = cubeOwner == -1 || cubeOwner == fMove;
                 if (canDouble)
                 {
-                    var cubeResult = EvaluateCubeDecision(board, playerOnRoll, settings, output,
-                        cubeValue, cubeOwner, nBasisCube, effectiveCubePlies);
+                    // Evaluate from current player's perspective (board is already correct)
+                    if (effectiveCubePlies > 0)
+                        _evaluator.EvaluatePositionPlied(board, output, effectiveCubePlies - 1);
+                    else
+                        _evaluator.EvaluatePosition(board, output);
 
-                    if (cubeResult.HasValue)
+                    // Build CubeInfo with absolute player indices (matching C's convention)
+                    var ci = new CubeInfo
                     {
-                        var (action, result) = cubeResult.Value;
-                        if (action == CubeTrialAction.DoublePass)
+                        Cube = cubeValue,
+                        CubeOwner = cubeOwner,
+                        Move = fMove,
+                        MatchTo = 0, // money game rollout
+                        Jacoby = false,
+                        Beavers = false,
+                    };
+
+                    if (CubeDecision.GetDPEq(ci, _met, out float dpEquity))
+                    {
+                        var cubeResult = CubeDecision.AnalyseMoney(output, ci);
+
+                        switch (cubeResult.Action)
                         {
-                            // Game over: opponent dropped
-                            if (settings.VarianceReduction)
-                                ApplyVarianceReduction(result, varRedn);
-                            return result;
+                            case CubeAction.DoublePass:
+                            case CubeAction.RedoublePass:
+                            case CubeAction.OptionalDoublePass:
+                            case CubeAction.OptionalRedoublePass:
+                            {
+                                // Opponent drops. Cubeless equity comes from the evaluation;
+                                // cubeful equity is the DP value (dpEquity) scaled by cube ratio.
+                                // Port of rollout.c: aarOutput[OUTPUT_CUBEFUL_EQUITY] = rDP,
+                                // post-loop scales by pci->nCube / nBasisCube.
+                                float clEq = MatchEquityTable.MoneyEquity(output);
+                                float cfEq = dpEquity;
+                                if (fMove != 0)
+                                {
+                                    Evaluator.InvertEvaluation(output);
+                                    clEq = -clEq;
+                                    cfEq = -cfEq;
+                                }
+                                double cubefulEq = cfEq * (double)cubeValue / nBasisCube;
+                                double[] dpResult =
+                                [
+                                    output[Constants.OutputWin],
+                                    output[Constants.OutputWinGammon],
+                                    output[Constants.OutputWinBackgammon],
+                                    output[Constants.OutputLoseGammon],
+                                    output[Constants.OutputLoseBackgammon],
+                                    clEq,
+                                    cubefulEq,
+                                ];
+                                if (settings.VarianceReduction)
+                                    ApplyVarianceReduction(dpResult, varRedn);
+                                return dpResult;
+                            }
+
+                            case CubeAction.DoubleTake:
+                            case CubeAction.DoubleBeaver:
+                            case CubeAction.RedoubleTake:
+                            case CubeAction.OptionalDoubleTake:
+                            case CubeAction.OptionalRedoubleTake:
+                            case CubeAction.OptionalDoubleBeaver:
+                                cubeValue *= 2;
+                                cubeOwner = 1 - fMove; // opponent now owns
+                                break;
+
+                            default:
+                                // No double: continue
+                                break;
                         }
-                        else if (action == CubeTrialAction.DoubleTake)
-                        {
-                            // Cube accepted: double value, ownership flips
-                            cubeValue *= 2;
-                            cubeOwner = playerOnRoll ? 1 : 0; // opponent now owns
-                        }
-                        // NoDouble: continue normally
                     }
                 }
             }
@@ -312,10 +401,10 @@ public sealed class RolloutEngine
             // Port of RolloutDice from rollout.c: when fInitial and first turn,
             // skip doubles (only 30 of 36 outcomes are valid).
             int d0, d1;
-            bool skipDoublesThisTurn = ply == 0 && settings.Initial;
+            bool skipDoublesThisTurn = iTurn == 0 && settings.Initial;
             if (settings.Rotate && perms != null)
             {
-                (d0, d1) = perms.GetRoll((int)trialIndex, ply, ref skip, skipDoubles: skipDoublesThisTurn);
+                (d0, d1) = perms.GetRoll((int)trialIndex, iTurn, ref skip, skipDoubles: skipDoublesThisTurn);
             }
             else
             {
@@ -326,20 +415,17 @@ public sealed class RolloutEngine
             }
 
             // Variance reduction: evaluate all 21 (or 15) dice outcomes at 0-ply.
-            // Port of rollout.c lines 596-638: when fInitial and first turn,
-            // skip doubles (j == i) and divide by 30 instead of 36.
+            // Port of rollout.c lines 596-638. Board is from current player's
+            // perspective; after best move + SwapSides + eval, the result is from
+            // the NEXT player's perspective. Invert to player 0 using !(iTurn & 1).
             if (settings.VarianceReduction)
             {
-                AccumulateVarianceReduction(board, playerOnRoll, d0, d1, output, varRedn,
+                AccumulateVarianceReduction(board, iTurn, d0, d1, output, varRedn,
                     skipDoubles: skipDoublesThisTurn);
             }
 
             // Find best move at the effective chequer ply depth.
-            // Uses FindnSaveBestMoves with move filters when plies > 0,
-            // matching GnuBG's BasicCubefulRollout which calls FindBestMove
-            // with defaultFilters during rollout play-out.
-            var activeBoard = playerOnRoll ? board : board.Swapped();
-
+            // Board is from current player's perspective — generate moves directly.
             if (effectiveChequerPlies > 0)
             {
                 // Use FindnSaveBestMoves with move filters (matches C: FindBestMove + defaultFilters)
@@ -351,27 +437,24 @@ public sealed class RolloutEngine
                     Deterministic = true,
                 };
                 var ml = new MoveList();
-                _evaluator.FindnSaveBestMoves(ml, activeBoard, d0, d1, ec);
+                _evaluator.FindnSaveBestMoves(ml, board, d0, d1, ec);
 
                 if (ml.Moves.Count > 0 && ml.BestIndex >= 0)
-                {
-                    var bestBoard = PositionId.FromKey(ml.Moves[ml.BestIndex].Key);
-                    board = playerOnRoll ? bestBoard : bestBoard.Swapped();
-                }
+                    board = PositionId.FromKey(ml.Moves[ml.BestIndex].Key);
             }
             else
             {
                 // 0-ply: evaluate all moves directly (no filtering needed)
-                var ml = MoveGenerator.GenerateMoves(activeBoard, d0, d1);
+                var ml = MoveGenerator.GenerateMoves(board, d0, d1);
 
                 if (ml.Moves.Count > 0)
                 {
-                    Board bestBoard = activeBoard;
+                    Board bestBoard = board;
                     float bestScore = float.MinValue;
 
                     foreach (var move in ml.Moves)
                     {
-                        var newBoard = MoveGenerator.ApplyMove(activeBoard, move);
+                        var newBoard = MoveGenerator.ApplyMove(board, move);
                         var swapped = newBoard.Swapped();
                         _evaluator.EvaluatePosition(swapped, output);
                         Evaluator.InvertEvaluation(output);
@@ -384,27 +467,27 @@ public sealed class RolloutEngine
                         }
                     }
 
-                    board = playerOnRoll ? bestBoard : bestBoard.Swapped();
+                    board = bestBoard;
                 }
             }
 
-            playerOnRoll = !playerOnRoll;
-            ply++;
+            // SwapSides for next player (matches C: SwapSides(aanBoard[ici]))
+            board.SwapSides();
+            iTurn++;
         }
 
-        // Truncated: evaluate at current position
-        var evalBoard = playerOnRoll ? board : board.Swapped();
-
+        // Truncated: evaluate at current position.
+        // Board is from current player's perspective; invert if odd turn.
         if (settings.Cubeful && settings.CubePlies > 0)
-            _evaluator.EvaluatePositionPlied(evalBoard, output, settings.CubePlies - 1);
+            _evaluator.EvaluatePositionPlied(board, output, settings.CubePlies - 1);
         else
-            _evaluator.EvaluatePosition(evalBoard, output);
+            _evaluator.EvaluatePosition(board, output);
 
-        if (!playerOnRoll)
+        if ((iTurn & 1) != 0)
             Evaluator.InvertEvaluation(output);
 
-        float equity = MatchEquityTable.MoneyEquity(output);
-        double cubefulEq = settings.Cubeful ? equity * (double)cubeValue / nBasisCube : equity;
+        float truncEq = MatchEquityTable.MoneyEquity(output);
+        double truncCubefulEq = settings.Cubeful ? truncEq * (double)cubeValue / nBasisCube : truncEq;
 
         double[] truncResult =
         [
@@ -413,8 +496,8 @@ public sealed class RolloutEngine
             output[Constants.OutputWinBackgammon],
             output[Constants.OutputLoseGammon],
             output[Constants.OutputLoseBackgammon],
-            equity,
-            cubefulEq,
+            truncEq,
+            truncCubefulEq,
         ];
 
         if (settings.VarianceReduction)
@@ -424,158 +507,26 @@ public sealed class RolloutEngine
     }
 
     /// <summary>
-    /// Evaluate cube decision during rollout play-out.
-    /// Port of the cube decision block from BasicCubefulRollout lines 471-556.
-    /// Returns null if no cube action should be taken (dead cube etc).
-    /// </summary>
-    private (CubeTrialAction action, double[] result)? EvaluateCubeDecision(
-        Board board, bool playerOnRoll, RolloutSettings settings, float[] output,
-        int cubeValue, int cubeOwner, int nBasisCube, int cubePlies)
-    {
-        var evalBoard = playerOnRoll ? board : board.Swapped();
-
-        // Evaluate position at the effective cube ply depth
-        // (may differ from settings.CubePlies when late evals are active)
-        if (cubePlies > 0)
-            _evaluator.EvaluatePositionPlied(evalBoard, output, cubePlies - 1);
-        else
-            _evaluator.EvaluatePosition(evalBoard, output);
-
-        if (!playerOnRoll)
-            Evaluator.InvertEvaluation(output);
-
-        // Build CubeInfo for current state
-        var ci = new CubeInfo
-        {
-            Cube = cubeValue,
-            CubeOwner = cubeOwner,
-            Move = 0, // current player is always 0 from their perspective
-            MatchTo = 0, // money game rollout
-            Jacoby = false,
-            Beavers = false,
-        };
-
-        // Check if doubling is possible
-        if (!CubeDecision.GetDPEq(ci, _met, out float dpEquity))
-            return null;
-
-        // Get no-double and double-take equities
-        var cubeResult = CubeDecision.AnalyseMoney(output, ci);
-
-        // Determine action
-        switch (cubeResult.Action)
-        {
-            case CubeAction.DoubleTake:
-            case CubeAction.DoubleBeaver:
-            case CubeAction.RedoubleTake:
-            case CubeAction.OptionalDoubleTake:
-            case CubeAction.OptionalRedoubleTake:
-            case CubeAction.OptionalDoubleBeaver:
-                return (CubeTrialAction.DoubleTake, null!);
-
-            case CubeAction.DoublePass:
-            case CubeAction.RedoublePass:
-            case CubeAction.OptionalDoublePass:
-            case CubeAction.OptionalRedoublePass:
-            {
-                // Game over: opponent drops. Assign double/pass equity.
-                float eq = dpEquity;
-                double cubefulEq = eq * (double)cubeValue / nBasisCube;
-                double[] result =
-                [
-                    output[Constants.OutputWin],
-                    output[Constants.OutputWinGammon],
-                    output[Constants.OutputWinBackgammon],
-                    output[Constants.OutputLoseGammon],
-                    output[Constants.OutputLoseBackgammon],
-                    eq,
-                    cubefulEq,
-                ];
-                return (CubeTrialAction.DoublePass, result);
-            }
-
-            default:
-                // No double: continue
-                return (CubeTrialAction.NoDouble, null!);
-        }
-    }
-
-    private enum CubeTrialAction
-    {
-        NoDouble,
-        DoubleTake,
-        DoublePass,
-    }
-
-    /// <summary>
-    /// Attempt bearoff truncation: if position is a bearoff position, evaluate directly.
-    /// Port of bearoff truncation from BasicCubefulRollout.
-    /// </summary>
-    private bool TryBearoffTruncation(Board board, bool playerOnRoll,
-        RolloutSettings settings, float[] output, out double[] result)
-    {
-        result = null!;
-
-        var evalBoard = playerOnRoll ? board : board.Swapped();
-        var pc = Classifier.Classify(evalBoard, _evaluator);
-
-        // Two-sided bearoff truncation
-        if (settings.TruncateBearoff2 && pc == PositionClass.BearoffTwoSided)
-        {
-            _evaluator.EvaluatePositionByClass(evalBoard, output, pc);
-            if (!playerOnRoll)
-                Evaluator.InvertEvaluation(output);
-
-            float eq = MatchEquityTable.MoneyEquity(output);
-            result =
-            [
-                output[Constants.OutputWin],
-                output[Constants.OutputWinGammon],
-                output[Constants.OutputWinBackgammon],
-                output[Constants.OutputLoseGammon],
-                output[Constants.OutputLoseBackgammon],
-                eq, eq,
-            ];
-            return true;
-        }
-
-        // One-sided bearoff truncation
-        if (settings.TruncateBearoffOS && pc == PositionClass.BearoffOneSided)
-        {
-            _evaluator.EvaluatePositionByClass(evalBoard, output, pc);
-            if (!playerOnRoll)
-                Evaluator.InvertEvaluation(output);
-
-            float eq = MatchEquityTable.MoneyEquity(output);
-            result =
-            [
-                output[Constants.OutputWin],
-                output[Constants.OutputWinGammon],
-                output[Constants.OutputWinBackgammon],
-                output[Constants.OutputLoseGammon],
-                output[Constants.OutputLoseBackgammon],
-                eq, eq,
-            ];
-            return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>
     /// Variance reduction: evaluate all 36 dice outcomes at 0-ply, compute mean,
     /// then accumulate the correction (mean - actual_roll_value).
-    /// Port of variance reduction from BasicCubefulRollout.
+    /// Port of variance reduction from BasicCubefulRollout (rollout.c lines 596-678).
+    ///
+    /// Board is from the current player's perspective. For each dice combination:
+    /// 1. Find best move at 0-ply
+    /// 2. SwapSides the result and evaluate from next player's perspective
+    /// 3. Invert to player 0's perspective:
+    ///    - Even turns (player 0 on roll): eval after SwapSides is from player 1 → invert
+    ///    - Odd turns (player 1 on roll): eval after SwapSides is from player 0 → keep
+    ///    Rule: if (!(iTurn &amp; 1)) InvertEvaluation (matches C)
     /// </summary>
     /// <param name="skipDoubles">
     /// When true (fInitial on first turn), skip doubles (d0 == d1) and divide by 30
     /// instead of 36. Port of rollout.c lines 596-638.
     /// </param>
-    private void AccumulateVarianceReduction(Board board, bool playerOnRoll,
+    private void AccumulateVarianceReduction(Board board, int iTurn,
         int actualD0, int actualD1, float[] output, double[] varRedn,
         bool skipDoubles = false)
     {
-        var activeBoard = playerOnRoll ? board : board.Swapped();
         double[] mean = new double[7];
         double[] actualRollValue = new double[7];
 
@@ -590,15 +541,16 @@ public sealed class RolloutEngine
 
                 float w = (d0 == d1) ? 1.0f : 2.0f;
 
-                var ml = MoveGenerator.GenerateMoves(activeBoard, d0, d1);
+                // Find best move at 0-ply from current player's perspective
+                var ml = MoveGenerator.GenerateMoves(board, d0, d1);
                 Board bestBoard;
                 if (ml.Moves.Count > 0)
                 {
-                    bestBoard = activeBoard;
+                    bestBoard = board;
                     float bestScore = float.MinValue;
                     foreach (var move in ml.Moves)
                     {
-                        var nb = MoveGenerator.ApplyMove(activeBoard, move);
+                        var nb = MoveGenerator.ApplyMove(board, move);
                         var sw = nb.Swapped();
                         _evaluator.EvaluatePosition(sw, output);
                         Evaluator.InvertEvaluation(output);
@@ -608,12 +560,23 @@ public sealed class RolloutEngine
                 }
                 else
                 {
-                    bestBoard = activeBoard.Clone();
+                    bestBoard = board.Clone();
                 }
 
-                var evalBoard2 = bestBoard.Swapped();
-                _evaluator.EvaluatePosition(evalBoard2, output);
-                Evaluator.InvertEvaluation(output);
+                // SwapSides and evaluate from next player's perspective
+                // (matches C: SwapSides + GeneralEvaluationE with flipped fMove)
+                var evalBoard = bestBoard.Swapped();
+                _evaluator.EvaluatePosition(evalBoard, output);
+                // output is from next player's perspective
+
+                // Invert to player 0's perspective.
+                // On even turns (player 0 was mover): after SwapSides, eval is
+                // from player 1's perspective → invert.
+                // On odd turns (player 1 was mover): after SwapSides, eval is
+                // from player 0's perspective → keep.
+                if ((iTurn & 1) == 0)
+                    Evaluator.InvertEvaluation(output);
+
                 float eq = MatchEquityTable.MoneyEquity(output);
 
                 double[] vals =
@@ -695,62 +658,6 @@ public sealed class RolloutEngine
                     stopped[i] = true;
             }
         }
-    }
-
-    private static bool IsGameOver(Board board, bool playerOnRoll, out double[] result)
-    {
-        result = null!;
-
-        // Check if player has borne off all pieces
-        bool playerHasPieces = false;
-        for (int i = 0; i < 25; i++)
-            if (board.Player[i] > 0) { playerHasPieces = true; break; }
-
-        if (!playerHasPieces)
-        {
-            // Player (original) has won
-            int oppCount = 0;
-            for (int i = 0; i < 25; i++) oppCount += (int)board.Opponent[i];
-            bool gammon = oppCount == 15;
-            bool backgammon = gammon && HasCheckersInHomeOrBar(board.Opponent);
-
-            result = playerOnRoll
-                ? [1, gammon ? 1 : 0, backgammon ? 1 : 0, 0, 0, ComputeEquity(1, gammon, backgammon, false, false), ComputeEquity(1, gammon, backgammon, false, false)]
-                : [0, 0, 0, gammon ? 1 : 0, backgammon ? 1 : 0, ComputeEquity(0, false, false, gammon, backgammon), ComputeEquity(0, false, false, gammon, backgammon)];
-            return true;
-        }
-
-        bool oppHasPieces = false;
-        for (int i = 0; i < 25; i++)
-            if (board.Opponent[i] > 0) { oppHasPieces = true; break; }
-
-        if (!oppHasPieces)
-        {
-            // Opponent (original) has won
-            int plCount = 0;
-            for (int i = 0; i < 25; i++) plCount += (int)board.Player[i];
-            bool gammon = plCount == 15;
-            bool backgammon = gammon && HasCheckersInHomeOrBar(board.Player);
-
-            result = playerOnRoll
-                ? [0, 0, 0, gammon ? 1 : 0, backgammon ? 1 : 0, ComputeEquity(0, false, false, gammon, backgammon), ComputeEquity(0, false, false, gammon, backgammon)]
-                : [1, gammon ? 1 : 0, backgammon ? 1 : 0, 0, 0, ComputeEquity(1, gammon, backgammon, false, false), ComputeEquity(1, gammon, backgammon, false, false)];
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool HasCheckersInHomeOrBar(uint[] side)
-    {
-        for (int i = 18; i < 25; i++)
-            if (side[i] > 0) return true;
-        return false;
-    }
-
-    private static double ComputeEquity(double win, bool wg, bool wbg, bool lg, bool lbg)
-    {
-        return win * 2.0 - 1.0 + (wg ? 1 : 0) + (wbg ? 1 : 0) - (lg ? 1 : 0) - (lbg ? 1 : 0);
     }
 
     private sealed class ThreadLocalState

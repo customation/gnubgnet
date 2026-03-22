@@ -110,12 +110,13 @@ public static class CubeDecision
 
         // No-double: cubeful equity keeping the cube as-is
         float noDoubleEquity = CubelessToCubefulMoney(
-            output, ci.CubeOwner, ci.Jacoby, cubeEff);
+            output, ci.CubeOwner, ci.Jacoby, cubeEff, ci.Move);
 
-        // Double-take: after doubling, opponent owns cube
-        int oppOwner = ci.CubeOwner == -1 ? 1 : 1 - ci.CubeOwner;
+        // Double-take: after doubling, opponent of doubler owns cube.
+        // The doubler is ci.Move, so opponent is 1 - ci.Move.
+        int oppOwner = 1 - ci.Move;
         float doubleTakeEquity = 2.0f * CubelessToCubefulMoney(
-            output, oppOwner, ci.Jacoby, cubeEff);
+            output, oppOwner, ci.Jacoby, cubeEff, ci.Move);
 
         // Double-pass: +1 normalized
         float doublePassEquity = 1.0f;
@@ -400,31 +401,45 @@ public static class CubeDecision
             return;
         }
 
+        // Port of getGammonPrice() from matchequity.c.
+        // Single pass with player=0 computing all 4 prices:
+        //   [0] = win gammon price, [1] = lose gammon price
+        //   [2] = win BG price, [3] = lose BG price
+        // Uses center formulation: gammon prices are "twice the usual value".
         int cube = ci.Cube;
-        for (int side = 0; side < 2; side++)
-        {
-            // MWC for winning/losing normal vs gammon vs backgammon
-            float mwcWinNormal = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
-                side, cube, side, ci.Crawford, met);
-            float mwcWinGammon = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
-                side, 2 * cube, side, ci.Crawford, met);
-            float mwcWinBG = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
-                side, 3 * cube, side, ci.Crawford, met);
-            float mwcLoseNormal = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
-                side, cube, 1 - side, ci.Crawford, met);
 
-            float denom = mwcWinNormal - mwcLoseNormal;
-            if (Math.Abs(denom) < 1e-8f)
-            {
-                ci.GammonPrice[side] = 0f;
-                ci.GammonPrice[2 + side] = 0f;
-            }
-            else
-            {
-                ci.GammonPrice[side] = (mwcWinGammon - mwcWinNormal) / denom;
-                ci.GammonPrice[2 + side] = (mwcWinBG - mwcWinGammon) / denom;
-            }
+        float rWin = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            0, cube, 0, ci.Crawford, met);
+        float rWinGammon = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            0, 2 * cube, 0, ci.Crawford, met);
+        float rWinBG = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            0, 3 * cube, 0, ci.Crawford, met);
+        float rLose = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            0, cube, 1, ci.Crawford, met);
+        float rLoseGammon = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            0, 2 * cube, 1, ci.Crawford, met);
+        float rLoseBG = GetME(ci.Score[0], ci.Score[1], ci.MatchTo,
+            0, 3 * cube, 1, ci.Crawford, met);
+
+        float rCenter = (rWin + rLose) / 2.0f;
+        float halfRange = rWin - rCenter; // = (rWin - rLose) / 2
+
+        if (MathF.Abs(halfRange) > 1e-7f)
+        {
+            ci.GammonPrice[0] = (rWinGammon - rCenter) / halfRange - 1.0f;
+            ci.GammonPrice[1] = (rCenter - rLoseGammon) / halfRange - 1.0f;
+            ci.GammonPrice[2] = (rWinBG - rCenter) / halfRange - (ci.GammonPrice[0] + 1.0f);
+            ci.GammonPrice[3] = (rCenter - rLoseBG) / halfRange - (ci.GammonPrice[1] + 1.0f);
         }
+        else
+        {
+            ci.GammonPrice[0] = ci.GammonPrice[1] = ci.GammonPrice[2] = ci.GammonPrice[3] = 0f;
+        }
+
+        // Correct numerical problems (same as C code)
+        for (int i = 0; i < 4; i++)
+            if (ci.GammonPrice[i] < 0.0f)
+                ci.GammonPrice[i] = 0.0f;
     }
 
     /// <summary>
@@ -520,6 +535,11 @@ public static class CubeDecision
     internal static float Cl2CfMatch(
         ReadOnlySpan<float> output, CubeInfo ci, MatchEquityTable met, float cubeEfficiency)
     {
+        // When the cube is dead (Crawford, DMP, both-can-win), cubeful = cubeless.
+        // Port of the fDoCubeful() guard in Cl2CfMatch() from eval.c.
+        if (IsCubeDead(ci))
+            return Eq2Mwc(UtilityMatch(output, ci, met), ci, met);
+
         if (ci.CubeOwner == -1)
             return Cl2CfMatchCentered(output, ci, met, cubeEfficiency);
         else if (ci.CubeOwner == ci.Move)

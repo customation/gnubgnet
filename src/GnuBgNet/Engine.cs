@@ -26,6 +26,7 @@ public sealed class Engine : IDisposable
     private readonly BearoffDatabase? _hyper2;
     private readonly BearoffDatabase? _hyper3;
     private readonly Evaluator _evaluator;
+    internal Evaluator Evaluator => _evaluator;
     private readonly MatchEquityTable _met;
 
     private Engine(NetworkSet nets, BearoffDatabase? osBearoff, BearoffDatabase? tsBearoff,
@@ -55,7 +56,12 @@ public sealed class Engine : IDisposable
 
         var nets = NetworkSet.LoadBinary(weightsPath);
         var (os, ts, h1, h2, h3) = LoadBearoffDatabases(dataDir);
-        var met = MatchEquityTable.ComputeDefault();
+
+        // Try loading Kazaross-XG2 MET from data directory; fall back to computed default.
+        var metXmlPath = Path.Combine(dataDir, "met", "Kazaross-XG2.xml");
+        var met = File.Exists(metXmlPath)
+            ? MetXmlLoader.LoadFromFile(metXmlPath)
+            : MatchEquityTable.ComputeDefault();
 
         return new Engine(nets, os, ts, h1, h2, h3, met);
     }
@@ -166,18 +172,20 @@ public sealed class Engine : IDisposable
         // First evaluation: cubeless (matches C: GeneralEvaluationE with ecBasic)
         float[] output = new float[Constants.NumOutputs];
         if (plies > 0)
-            _evaluator.EvaluatePositionPlied(board, output, plies);
+            _evaluator.EvaluatePositionPlied(board, output, plies, true, null, ci);
         else
             _evaluator.EvaluatePosition(board, output);
 
-        float equity = MatchEquityTable.MoneyEquity(output);
+        float equity = ci.MatchTo > 0
+            ? CubeDecision.UtilityMatch(output, ci, _met)
+            : MatchEquityTable.MoneyEquity(output);
 
         // Second evaluation: cubeful (matches C: ec.fCubeful = 1; GeneralEvaluationE)
         var ec = new EvalContext
         {
             Cubeful = true,
             Plies = plies,
-            UsePrune = plies >= 2,
+            UsePrune = true,
             Deterministic = true,
         };
         float[] arCubeful = new float[Constants.NumRolloutOutputs];
@@ -247,7 +255,7 @@ public sealed class Engine : IDisposable
         {
             Cubeful = true,
             Plies = plies,
-            UsePrune = plies >= 2,
+            UsePrune = true,
             Deterministic = true,
         };
 
