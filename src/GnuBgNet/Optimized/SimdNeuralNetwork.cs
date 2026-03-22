@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Optimized neural network with TensorPrimitives and vectorized sigmoid.
+// Optimized neural network with TensorPrimitives and LUT sigmoid.
 
-using System.Numerics;
 using System.Numerics.Tensors;
 using System.Runtime.CompilerServices;
 using GnuBgNet.NeuralNet;
@@ -133,7 +132,7 @@ public sealed class SimdNeuralNetwork : INeuralNetwork
             hidden.Slice(0, cHidden).CopyTo(saveHidden);
 
         // SIMD sigmoid using Padé approximation
-        ApplySigmoidSimd(hidden, BetaHidden);
+        ApplySigmoid(hidden, BetaHidden);
 
         // TensorPrimitives.Dot for output layer
         ComputeOutputLayerSimd(hidden, output);
@@ -170,44 +169,19 @@ public sealed class SimdNeuralNetwork : INeuralNetwork
             }
         }
 
-        ApplySigmoidSimd(hidden, BetaHidden);
+        ApplySigmoid(hidden, BetaHidden);
         ComputeOutputLayerSimd(hidden, output);
     }
 
     /// <summary>
-    /// SIMD sigmoid using Padé [2,2] rational approximation for tanh.
-    /// σ(β·h) = 0.5 + 0.5·tanh(β·h/2), with tanh(y) ≈ y·(15+y²)/(15+6y²).
+    /// Apply sigmoid using LUT (same as base NeuralNetwork).
+    /// Benchmarks show LUT is faster than Padé rational approximation
+    /// because scalar table lookup avoids costly SIMD division.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ApplySigmoidSimd(Span<float> values, float beta)
+    private static void ApplySigmoid(Span<float> values, float beta)
     {
-        int vecSize = Vector<float>.Count;
-        var halfBeta = new Vector<float>(0.5f * beta);
-        var half = new Vector<float>(0.5f);
-        var fifteen = new Vector<float>(15f);
-        var six = new Vector<float>(6f);
-        var one = new Vector<float>(1f);
-        var zero = Vector<float>.Zero;
-
-        int i = 0;
-        for (; i + vecSize <= values.Length; i += vecSize)
-        {
-            var h = new Vector<float>(values.Slice(i, vecSize));
-
-            var y = h * halfBeta;
-            var y2 = y * y;
-
-            var num = y * (fifteen + y2);
-            var den = fifteen + six * y2;
-            var tanh_y = num / den;
-
-            var result = half + half * tanh_y;
-            result = Vector.Max(zero, Vector.Min(one, result));
-            result.CopyTo(values.Slice(i, vecSize));
-        }
-
-        // Scalar remainder using original LUT for accuracy
-        for (; i < values.Length; i++)
+        for (int i = 0; i < values.Length; i++)
             values[i] = Sigmoid.Evaluate(-beta * values[i]);
     }
 
