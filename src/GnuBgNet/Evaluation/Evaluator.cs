@@ -1186,7 +1186,8 @@ public sealed class Evaluator : IPositionEvaluator
         if (ec.Cubeful)
         {
             float rCubeful = 0;
-            CubeInfo[] aciSpan = [ci];
+            Span<CubeInfo> aciSpan = stackalloc CubeInfo[1];
+            aciSpan[0] = ci;
             EvaluatePositionCubeful3(board, arOutput, ref rCubeful,
                 aciSpan, 1, ci, ec, nPlies, false);
 
@@ -1214,11 +1215,37 @@ public sealed class Evaluator : IPositionEvaluator
         ReadOnlySpan<CubeInfo> aciCubePos, int cci, CubeInfo pciMove,
         EvalContext ec, int nPlies, bool fTop)
     {
-        // For simplicity, skip cache for now and go directly to evaluation
+        // Cache lookup (matching C's EvaluatePositionCubeful3)
+        if (!fTop && ec.Noise == 0.0f && aciCubePos[0].Cube > 0)
+        {
+            var key = PositionId.ToKey(board);
+            int evalKey = EvalCache.ComputeEvalKey(nPlies, ec.Cubeful,
+                ec.UsePrune, aciCubePos[0], true);
+            Span<float> cached = stackalloc float[Constants.NumOutputs + 1];
+            if (_mainCache.Lookup(key, evalKey, cached) == EvalCache.CacheHit)
+            {
+                cached.Slice(0, Constants.NumOutputs).CopyTo(arOutput);
+                cubeful = cached[Constants.NumOutputs];
+                return;
+            }
+        }
+
         Span<float> arCubeful = stackalloc float[cci];
         EvaluatePositionCubeful4(board, arOutput, arCubeful,
             aciCubePos, cci, pciMove, ec, nPlies, fTop);
         cubeful = arCubeful[0];
+
+        // Cache store
+        if (!fTop && ec.Noise == 0.0f && aciCubePos[0].Cube > 0)
+        {
+            var key = PositionId.ToKey(board);
+            Span<float> cacheEntry = stackalloc float[Constants.NumOutputs + 1];
+            arOutput.Slice(0, Constants.NumOutputs).CopyTo(cacheEntry);
+            cacheEntry[Constants.NumOutputs] = cubeful;
+            int evalKey = EvalCache.ComputeEvalKey(nPlies, ec.Cubeful,
+                ec.UsePrune, aciCubePos[0], true);
+            _mainCache.Add(key, evalKey, cacheEntry, 0);
+        }
     }
 
     /// <summary>
@@ -1285,7 +1312,7 @@ public sealed class Evaluator : IPositionEvaluator
     {
         var pc = Classifier.Classify(board, this);
         Span<float> arCf = stackalloc float[2 * cci];
-        CubeInfo[] aci = new CubeInfo[2 * cci];
+        Span<CubeInfo> aci = stackalloc CubeInfo[2 * cci];
 
         if (pc > PositionClass.BearoffTwoSided && nPlies > 0)
         {
@@ -1327,8 +1354,8 @@ public sealed class Evaluator : IPositionEvaluator
                     var newBoard = FindBestMoveForRoll(board, n0, n1, usePrune, pciMove, cubeful: true);
                     newBoard.SwapSides();
 
-                    // Evaluate recursively
-                    EvaluatePositionCubeful4(newBoard, ar, arCfTemp,
+                    // Evaluate recursively (through cache, matching C's call to EvaluatePositionCubeful3)
+                    EvaluatePositionCubeful3Multi(newBoard, ar, arCfTemp,
                         aci, 2 * cci, ciMoveOpp, ec, nPlies - 1, false);
 
                     for (int i = 0; i < Constants.NumOutputs; i++)
