@@ -2,7 +2,59 @@
 // Copyright (C) 2000-2014 the AUTHORS
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+
 namespace GnuBgNet;
+
+/// <summary>
+/// Inline storage for 8 ints (4 sub-move src/dest pairs).
+/// Eliminates heap int[] allocation per Move.
+/// </summary>
+[InlineArray(8)]
+public struct AnMoveArray
+{
+    private int _element0;
+
+    /// <summary>Get a Span over all 8 elements.</summary>
+    public Span<int> AsSpan() =>
+        MemoryMarshal.CreateSpan(ref _element0, 8);
+
+    /// <summary>Get a ReadOnlySpan over all 8 elements.</summary>
+    public readonly ReadOnlySpan<int> AsReadOnlySpan() =>
+        MemoryMarshal.CreateReadOnlySpan(
+            ref Unsafe.AsRef(in _element0), 8);
+
+    /// <summary>Copy to a new int[] array (for public API boundaries).</summary>
+    public readonly int[] ToArray() => AsReadOnlySpan().ToArray();
+
+    /// <summary>Create from initializer, filling remaining slots with -1.</summary>
+    public static AnMoveArray CreateDefault()
+    {
+        var a = new AnMoveArray();
+        a.AsSpan().Fill(-1);
+        return a;
+    }
+}
+
+/// <summary>
+/// Inline storage for 7 floats (5 probs + cubeless + cubeful equity).
+/// Eliminates heap float[] allocation per Move.
+/// </summary>
+[InlineArray(7)]
+public struct EvalOutputArray
+{
+    private float _element0;
+
+    /// <summary>Get a Span over all 7 elements.</summary>
+    public Span<float> AsSpan() =>
+        MemoryMarshal.CreateSpan(ref _element0, 7);
+
+    /// <summary>Get a ReadOnlySpan over all 7 elements.</summary>
+    public readonly ReadOnlySpan<float> AsReadOnlySpan() =>
+        MemoryMarshal.CreateReadOnlySpan(
+            ref Unsafe.AsRef(in _element0), 7);
+}
 
 /// <summary>
 /// A single backgammon move: up to 4 sub-moves encoded as src/dest pairs in AnMove[0..7].
@@ -11,31 +63,28 @@ namespace GnuBgNet;
 public sealed class Move
 {
     /// <summary>Source-destination pairs, -1 terminated. Up to 4 sub-moves = 8 ints.</summary>
-    public int[] AnMove { get; set; } = [-1, -1, -1, -1, -1, -1, -1, -1];
+    public AnMoveArray AnMove = AnMoveArray.CreateDefault();
 
     /// <summary>Position key after move is applied.</summary>
-    public PositionKey Key { get; set; }
+    public PositionKey Key;
 
     /// <summary>Number of sub-moves actually played (1-4).</summary>
-    public uint SubMoveCount { get; set; }
+    public uint SubMoveCount;
 
     /// <summary>Total pips moved.</summary>
-    public uint Pips { get; set; }
+    public uint Pips;
 
     /// <summary>Primary evaluation score (cubeful if fCubeful, else cubeless equity).</summary>
-    public float Score { get; set; }
+    public float Score;
 
     /// <summary>Secondary evaluation score (always cubeless equity).</summary>
-    public float Score2 { get; set; }
+    public float Score2;
 
     /// <summary>All 7 evaluation outputs (5 probs + cubeless + cubeful equity).</summary>
-    public float[] EvalOutputs { get; set; } = new float[Constants.NumRolloutOutputs];
-
-    /// <summary>Standard deviations for rollout outputs.</summary>
-    public float[] EvalStdDev { get; set; } = new float[Constants.NumRolloutOutputs];
+    public EvalOutputArray EvalOutputs;
 
     /// <summary>Evaluation setup used to produce this score.</summary>
-    public EvalSetup MoveEvalSetup { get; set; } = new();
+    public EvalSetup MoveEvalSetup;
 }
 
 /// <summary>

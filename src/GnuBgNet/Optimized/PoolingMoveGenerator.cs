@@ -94,14 +94,8 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
         if (t_movePool.Count > 0)
         {
             var m = t_movePool.Pop();
-            m.AnMove[0] = -1;
-            m.AnMove[1] = -1;
-            m.AnMove[2] = -1;
-            m.AnMove[3] = -1;
-            m.AnMove[4] = -1;
-            m.AnMove[5] = -1;
-            m.AnMove[6] = -1;
-            m.AnMove[7] = -1;
+            m.AnMove.AsSpan().Fill(-1);
+            m.EvalOutputs = default;
             m.Key = default;
             m.SubMoveCount = 0;
             m.Pips = 0;

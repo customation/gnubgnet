@@ -385,7 +385,7 @@ public sealed class Engine : IDisposable
             string resultPosId = PositionId.Encode(newBoard);
 
             scoredMoves.Add(new ScoredMove(
-                AnMove: (int[])move.AnMove.Clone(),
+                AnMove: move.AnMove.ToArray(),
                 ResultPositionId: resultPosId,
                 SubMoveCount: (int)move.SubMoveCount,
                 Pips: (int)move.Pips,
@@ -418,7 +418,7 @@ public sealed class Engine : IDisposable
         {
             string resultPosId = PositionId.Encode(PositionId.FromKey(move.Key));
             result.Add(new ScoredMove(
-                AnMove: (int[])move.AnMove.Clone(),
+                AnMove: move.AnMove.ToArray(),
                 ResultPositionId: resultPosId,
                 SubMoveCount: (int)move.SubMoveCount,
                 Pips: (int)move.Pips,

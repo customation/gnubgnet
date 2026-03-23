@@ -369,7 +369,7 @@ public sealed class Evaluator : IPositionEvaluator
             arEval[Constants.OutputCubefulEquity] = arEval[Constants.OutputEquity];
         }
 
-        arEval.Slice(0, Constants.NumRolloutOutputs).CopyTo(move.EvalOutputs);
+        arEval.Slice(0, Constants.NumRolloutOutputs).CopyTo(move.EvalOutputs.AsSpan());
 
         move.MoveEvalSetup = new EvalSetup
         {

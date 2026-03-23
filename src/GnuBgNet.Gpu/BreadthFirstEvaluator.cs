@@ -382,7 +382,7 @@ public sealed class BreadthFirstEvaluator : IPositionEvaluator
             ml.Moves[i].Score = equity;
             ml.Moves[i].Score2 = equity;
 
-            Array.Copy(inverted, ml.Moves[i].EvalOutputs, Constants.NumOutputs);
+            inverted.AsSpan(0, Constants.NumOutputs).CopyTo(ml.Moves[i].EvalOutputs.AsSpan());
             ml.Moves[i].EvalOutputs[Constants.OutputEquity] = equity;
             ml.Moves[i].EvalOutputs[Constants.OutputCubefulEquity] = equity;
 
