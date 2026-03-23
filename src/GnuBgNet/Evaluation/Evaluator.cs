@@ -29,6 +29,15 @@ public sealed class Evaluator : IPositionEvaluator
 
     // Board is now a stack-allocated struct — no pooling needed.
 
+    // Thread-local NNState for incremental evaluation (one per NN class).
+    // Matches C's MT_Get_nnState() — Race=0, Contact=1, Crashed=2.
+    private const int NNStateCount = 3;
+    private const int NNStateRace = 0;
+    private const int NNStateContact = 1;
+    private const int NNStateCrashed = 2;
+
+    [ThreadStatic] private static NNState[]? t_nnStates;
+
     internal IBearoffDatabase? OneSidedBearoff { get; }
     internal IBearoffDatabase? TwoSidedBearoff { get; }
     internal IBearoffDatabase? HypergammonBearoff1 { get; }
@@ -67,6 +76,28 @@ public sealed class Evaluator : IPositionEvaluator
 
     /// <inheritdoc />
     public PositionClass ClassifyPosition(Board board) => Classifier.Classify(board, this);
+
+    /// <summary>
+    /// Get or create thread-local NNState array for incremental evaluation.
+    /// </summary>
+    private NNState[] GetNNStates()
+    {
+        var states = t_nnStates;
+        if (states != null) return states;
+
+        // Determine max hidden/input across all nets
+        int maxHidden = Math.Max(_nets.Race.HiddenCount,
+            Math.Max(_nets.Contact.HiddenCount, _nets.Crashed.HiddenCount));
+        int maxInput = Math.Max(_nets.Race.InputCount,
+            Math.Max(_nets.Contact.InputCount, _nets.Crashed.InputCount));
+
+        states = new NNState[NNStateCount];
+        for (int i = 0; i < NNStateCount; i++)
+            states[i] = new NNState(maxHidden, maxInput);
+
+        t_nnStates = states;
+        return states;
+    }
 
     /// <summary>
     /// Evaluate a position at 0-ply (neural net or bearoff lookup).
@@ -296,9 +327,18 @@ public sealed class Evaluator : IPositionEvaluator
     {
         ml.BestScore = -99999.9f;
 
+        // Enable incremental NN evaluation at 0-ply (matching C's ScoreMoves).
+        NNState[]? nnStates = null;
+        if (nPlies == 0)
+        {
+            nnStates = GetNNStates();
+            for (int s = 0; s < NNStateCount; s++)
+                nnStates[s].State = NNStateType.Incremental;
+        }
+
         for (int i = 0; i < ml.Moves.Count; i++)
         {
-            ScoreMove(ml.Moves[i], nPlies);
+            ScoreMove(ml.Moves[i], nPlies, nnStates);
 
             if (ml.Moves[i].Score > ml.BestScore ||
                 (ml.Moves[i].Score == ml.BestScore &&
@@ -308,6 +348,12 @@ public sealed class Evaluator : IPositionEvaluator
                 ml.BestScore = ml.Moves[i].Score;
             }
         }
+
+        if (nnStates != null)
+        {
+            for (int s = 0; s < NNStateCount; s++)
+                nnStates[s].State = NNStateType.None;
+        }
     }
 
     /// <summary>
@@ -316,7 +362,12 @@ public sealed class Evaluator : IPositionEvaluator
     /// </summary>
     internal void ScoreMove(Move move, int nPlies)
     {
-        ScoreMove(move, nPlies, null, false);
+        ScoreMove(move, nPlies, (NNState[]?)null);
+    }
+
+    private void ScoreMove(Move move, int nPlies, NNState[]? nnStates)
+    {
+        ScoreMove(move, nPlies, null, false, nnStates);
     }
 
     /// <summary>
@@ -324,6 +375,12 @@ public sealed class Evaluator : IPositionEvaluator
     /// Port of ScoreMove() from eval.c.
     /// </summary>
     internal void ScoreMove(Move move, int nPlies, CubeInfo? ci, bool cubeful)
+    {
+        ScoreMove(move, nPlies, ci, cubeful, null);
+    }
+
+    private void ScoreMove(Move move, int nPlies, CubeInfo? ci, bool cubeful,
+        NNState[]? nnStates)
     {
         Span<float> arEval = stackalloc float[Constants.NumRolloutOutputs];
         var moveBoard = new Board();
@@ -359,7 +416,10 @@ public sealed class Evaluator : IPositionEvaluator
         else
         {
             if (nPlies == 0)
-                EvaluatePosition(moveBoard, arEval);
+            {
+                var pc = Classifier.Classify(moveBoard, this);
+                EvaluatePositionByClass(moveBoard, arEval, pc, nnStates);
+            }
             else
                 EvaluatePositionPlied(moveBoard, arEval, nPlies);
 
@@ -508,10 +568,18 @@ public sealed class Evaluator : IPositionEvaluator
             int bestIdx = 0;
             Span<float> output = stackalloc float[Constants.NumOutputs];
             var scratchBoard = new Board();
+
+            // Enable incremental NN evaluation — save base on first move,
+            // compute from base on subsequent moves (matching C's ScoreMoves).
+            var nnStates = GetNNStates();
+            for (int s = 0; s < NNStateCount; s++)
+                nnStates[s].State = NNStateType.Incremental;
+
             for (int i = 0; i < candidates.Count; i++)
             {
                 PositionId.FromKeySwappedInto(candidates[i].Key, ref scratchBoard);
-                EvaluatePosition(scratchBoard, output);
+                var pc = Classifier.Classify(scratchBoard, this);
+                EvaluatePositionByClass(scratchBoard, output, pc, nnStates);
                 InvertEvaluation(output);
 
                 float score = ComputeEquity(output, ci);
@@ -521,6 +589,9 @@ public sealed class Evaluator : IPositionEvaluator
                     bestIdx = i;
                 }
             }
+
+            for (int s = 0; s < NNStateCount; s++)
+                nnStates[s].State = NNStateType.None;
 
             return candidates[bestIdx].Key;
         }
@@ -553,10 +624,16 @@ public sealed class Evaluator : IPositionEvaluator
             int bestIdx = 0;
             Span<float> output = stackalloc float[Constants.NumOutputs];
             var scratchBoard = new Board();
+
+            var nnStates = GetNNStates();
+            for (int s = 0; s < NNStateCount; s++)
+                nnStates[s].State = NNStateType.Incremental;
+
             for (int i = 0; i < ml.Moves.Count; i++)
             {
                 PositionId.FromKeySwappedInto(ml.Moves[i].Key, ref scratchBoard);
-                EvaluatePosition(scratchBoard, output);
+                var pc = Classifier.Classify(scratchBoard, this);
+                EvaluatePositionByClass(scratchBoard, output, pc, nnStates);
                 InvertEvaluation(output);
 
                 float score = ComputeEquity(output, ci);
@@ -566,6 +643,9 @@ public sealed class Evaluator : IPositionEvaluator
                     bestIdx = i;
                 }
             }
+
+            for (int s = 0; s < NNStateCount; s++)
+                nnStates[s].State = NNStateType.None;
 
             return ml.Moves[bestIdx].Key;
         }
@@ -597,6 +677,10 @@ public sealed class Evaluator : IPositionEvaluator
     /// Port of leaf evaluation in EvaluatePositionFull.
     /// </summary>
     public void EvaluatePositionByClass(Board board, Span<float> output, PositionClass pc)
+        => EvaluatePositionByClass(board, output, pc, null);
+
+    private void EvaluatePositionByClass(Board board, Span<float> output, PositionClass pc,
+        NNState[]? nnStates)
     {
         switch (pc)
         {
@@ -619,16 +703,16 @@ public sealed class Evaluator : IPositionEvaluator
                 OneSidedBearoff!.Evaluate(board, output);
                 break;
             case PositionClass.Race:
-                EvalRace(board, output);
+                EvalRace(board, output, nnStates?[NNStateRace]);
                 break;
             case PositionClass.Crashed:
-                EvalCrashed(board, output);
+                EvalCrashed(board, output, nnStates?[NNStateCrashed]);
                 break;
             case PositionClass.Contact:
-                EvalContact(board, output);
+                EvalContact(board, output, nnStates?[NNStateContact]);
                 break;
             default:
-                EvalContact(board, output);
+                EvalContact(board, output, nnStates?[NNStateContact]);
                 break;
         }
 
@@ -636,11 +720,11 @@ public sealed class Evaluator : IPositionEvaluator
             SanityCheck(board, output);
     }
 
-    private void EvalRace(Board board, Span<float> output)
+    private void EvalRace(Board board, Span<float> output, NNState? state = null)
     {
         Span<float> inputs = stackalloc float[Constants.NumRaceInputs];
         _inputCalc.CalculateRaceInputs(board, inputs);
-        _nets.Race.Evaluate(inputs, output);
+        _nets.Race.Evaluate(inputs, output, state);
 
         // Special evaluation of backgammons overrides net output
         EvalRaceBG(board, output);
@@ -788,18 +872,18 @@ public sealed class Evaluator : IPositionEvaluator
         return result;
     }
 
-    private void EvalContact(Board board, Span<float> output)
+    private void EvalContact(Board board, Span<float> output, NNState? state = null)
     {
         Span<float> inputs = stackalloc float[Constants.NumContactInputs];
         _inputCalc.CalculateContactInputs(board, inputs);
-        _nets.Contact.Evaluate(inputs, output);
+        _nets.Contact.Evaluate(inputs, output, state);
     }
 
-    private void EvalCrashed(Board board, Span<float> output)
+    private void EvalCrashed(Board board, Span<float> output, NNState? state = null)
     {
         Span<float> inputs = stackalloc float[Constants.NumCrashedInputs];
         _inputCalc.CalculateCrashedInputs(board, inputs);
-        _nets.Crashed.Evaluate(inputs, output);
+        _nets.Crashed.Evaluate(inputs, output, state);
     }
 
     /// <summary>
