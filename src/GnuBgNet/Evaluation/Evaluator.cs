@@ -252,8 +252,11 @@ public sealed class Evaluator : IPositionEvaluator
         {
             if (TryScoreWithPruningNets(ml, board, ci))
             {
-                var candidates = SelectTopMoves(ml, pruneMoves);
-                var bestKey = FindBestKeyFromCandidates(candidates, ci, cubeful);
+                // Sort in-place and trim to top candidates (avoids List copy allocation)
+                SortMovesByScore(ml);
+                if (ml.Moves.Count > pruneMoves)
+                    ml.Moves.RemoveRange(pruneMoves, ml.Moves.Count - pruneMoves);
+                var bestKey = FindBestKeyFromAll(ml, ci, cubeful);
                 _moveGen.ReturnMoves(ml);
                 return PositionId.FromKey(bestKey);
             }
