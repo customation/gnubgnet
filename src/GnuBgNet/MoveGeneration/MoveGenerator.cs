@@ -35,12 +35,12 @@ public static class MoveGenerator
         ml.MaxPips = 0;
         ml.MaxMoves = 0;
 
-        int[] anRoll = new int[4];
+        Span<int> anRoll = stackalloc int[4];
         anRoll[0] = n0;
         anRoll[1] = n1;
         anRoll[2] = anRoll[3] = (n0 == n1) ? n0 : 0;
 
-        int[] anMoves = new int[8];
+        Span<int> anMoves = stackalloc int[8];
 
         GenerateMovesSub(ml, anRoll, 0, 23, 0, board, anMoves);
 
@@ -112,8 +112,8 @@ public static class MoveGenerator
         return newBoard;
     }
 
-    private static bool GenerateMovesSub(MoveList ml, int[] anRoll, int nMoveDepth,
-        int iPip, int cPip, Board board, int[] anMoves)
+    private static bool GenerateMovesSub(MoveList ml, Span<int> anRoll, int nMoveDepth,
+        int iPip, int cPip, Board board, Span<int> anMoves)
     {
         if (nMoveDepth > 3 || anRoll[nMoveDepth] == 0)
             return true;
@@ -198,7 +198,7 @@ public static class MoveGenerator
         board.Player[iDest]++;
     }
 
-    private static void SaveMoves(MoveList ml, int cMoves, uint cPip, int[] anMoves, Board board)
+    private static void SaveMoves(MoveList ml, int cMoves, uint cPip, Span<int> anMoves, Board board)
     {
         uint cMovesU = (uint)cMoves;
 
@@ -244,7 +244,7 @@ public static class MoveGenerator
         ml.Moves.Add(move);
     }
 
-    private static void CopyAnMoves(int[] src, int cMoves, Move dest)
+    private static void CopyAnMoves(Span<int> src, int cMoves, Move dest)
     {
         for (int i = 0; i < cMoves * 2; i++)
             dest.AnMove[i] = src[i] > -1 ? src[i] : -1;

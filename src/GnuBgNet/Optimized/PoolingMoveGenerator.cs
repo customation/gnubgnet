@@ -35,18 +35,19 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
         Span<int> anMoves = stackalloc int[8];
         anMoves.Fill(-1);
 
+        Span<int> anRoll = stackalloc int[4];
         if (n0 == n1)
         {
-            int[] anRoll = [n0, n0, n0, n0];
+            anRoll[0] = anRoll[1] = anRoll[2] = anRoll[3] = n0;
             GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
         }
         else
         {
-            int[] anRoll1 = [n0, n1, 0, 0];
-            GenerateMovesSub(ml, anRoll1, 0, 23, 0, ref board, anMoves);
+            anRoll[0] = n0; anRoll[1] = n1; anRoll[2] = 0; anRoll[3] = 0;
+            GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
 
-            int[] anRoll2 = [n1, n0, 0, 0];
-            GenerateMovesSub(ml, anRoll2, 0, 23, 0, ref board, anMoves);
+            anRoll[0] = n1; anRoll[1] = n0;
+            GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
         }
     }
 
@@ -173,7 +174,7 @@ public sealed class PoolingMoveGenerator : IMoveGenerator
         return nBack <= 5 && (iSrc == nBack || iDest == -1);
     }
 
-    private static bool GenerateMovesSub(MoveList ml, int[] anRoll, int nMoveDepth,
+    private static bool GenerateMovesSub(MoveList ml, Span<int> anRoll, int nMoveDepth,
         int iPip, int cPip, ref Board board, Span<int> anMoves)
     {
         if (nMoveDepth > 3 || anRoll[nMoveDepth] == 0)

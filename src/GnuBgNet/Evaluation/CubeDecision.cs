@@ -561,16 +561,16 @@ public static class CubeDecision
         float mwcDead = Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
         // Get live cube cash points
-        float[] arCP = new float[2];
+        Span<float> arCP = stackalloc float[2];
         GetPoints(output, ci, met, arCP);
 
         // Get MWC for basic outcomes at current cube level
-        float[] p0 = new float[MET_DTLBP1 + 1];
-        float[] p1 = new float[MET_DTLBP1 + 1];
+        Span<float> p0 = stackalloc float[MET_DTLBP1 + 1];
+        Span<float> p1 = stackalloc float[MET_DTLBP1 + 1];
         GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Cube, -1, -1, ci.Crawford, met, p0, p1);
 
-        float[] res = ci.Move == 0 ? p0 : p1;
+        Span<float> res = ci.Move == 0 ? p0 : p1;
         float mwcCash = res[MET_NDW];
         float mwcOppCash = res[MET_NDL];
 
@@ -616,15 +616,15 @@ public static class CubeDecision
 
         float mwcDead = Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
-        float[] arCP = new float[2];
+        Span<float> arCP = stackalloc float[2];
         GetPoints(output, ci, met, arCP);
 
-        float[] p0 = new float[MET_DTLBP1 + 1];
-        float[] p1 = new float[MET_DTLBP1 + 1];
+        Span<float> p0 = stackalloc float[MET_DTLBP1 + 1];
+        Span<float> p1 = stackalloc float[MET_DTLBP1 + 1];
         GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Cube, -1, -1, ci.Crawford, met, p0, p1);
 
-        float[] res = ci.Move == 0 ? p0 : p1;
+        Span<float> res = ci.Move == 0 ? p0 : p1;
         float mwcCash = res[MET_NDW];
         float rTG = arCP[ci.Move];
 
@@ -662,15 +662,15 @@ public static class CubeDecision
 
         float mwcDead = Eq2Mwc(UtilityMatch(output, ref ci, met), ci, met);
 
-        float[] arCP = new float[2];
+        Span<float> arCP = stackalloc float[2];
         GetPoints(output, ci, met, arCP);
 
-        float[] p0 = new float[MET_DTLBP1 + 1];
-        float[] p1 = new float[MET_DTLBP1 + 1];
+        Span<float> p0 = stackalloc float[MET_DTLBP1 + 1];
+        Span<float> p1 = stackalloc float[MET_DTLBP1 + 1];
         GetMEMultiple(ci.Score0, ci.Score1, ci.MatchTo,
             ci.Cube, -1, -1, ci.Crawford, met, p0, p1);
 
-        float[] res = ci.Move == 0 ? p0 : p1;
+        Span<float> res = ci.Move == 0 ? p0 : p1;
         float mwcOppCash = res[MET_NDL];
         float rOppTG = 1.0f - arCP[1 - ci.Move];
 
@@ -747,9 +747,9 @@ public static class CubeDecision
     /// </summary>
     internal static void GetMEMultiple(int score0, int score1, int matchTo,
         int cube, int cubePrime0, int cubePrime1, bool crawford,
-        IMatchEquityTable met, float[] player0, float[] player1)
+        IMatchEquityTable met, Span<float> player0, Span<float> player1)
     {
-        int[] mult = [1, 2, 3, 4, 6];
+        ReadOnlySpan<int> mult = [1, 2, 3, 4, 6];
         int away0 = matchTo - score0 - 1;
         int away1 = matchTo - score1 - 1;
         bool crawf = crawford || (matchTo - score0 == 1) || (matchTo - score1 == 1);
@@ -760,8 +760,8 @@ public static class CubeDecision
                    : MET_DTLBP1 + 1;
 
         // Build score arrays for all outcomes
-        int[] s0 = new int[maxRes];
-        int[] s1 = new int[maxRes];
+        Span<int> s0 = stackalloc int[MET_DTLBP1 + 1];
+        Span<int> s1 = stackalloc int[MET_DTLBP1 + 1];
         int idx = 0;
 
         // First cube level: player 0 wins
@@ -865,7 +865,7 @@ public static class CubeDecision
             SwapBlock(player1, MET_DPP1, MET_DPP1 + NDL_COUNT, NDL_COUNT);
     }
 
-    private static void SwapBlock(float[] arr, int offset0, int offset1, int count)
+    private static void SwapBlock(Span<float> arr, int offset0, int offset1, int count)
     {
         for (int i = 0; i < count; i++)
             (arr[offset0 + i], arr[offset1 + i]) = (arr[offset1 + i], arr[offset0 + i]);
@@ -888,15 +888,15 @@ public static class CubeDecision
     /// Returns arCP[0] = cash point for player 0, arCP[1] = cash point for player 1.
     /// </summary>
     internal static void GetPoints(ReadOnlySpan<float> output, CubeInfo ci,
-        IMatchEquityTable met, float[] arCP)
+        IMatchEquityTable met, Span<float> arCP)
     {
         int away0 = ci.MatchTo - ci.Score0 - 1;
         int away1 = ci.MatchTo - ci.Score1 - 1;
         int cube = ci.Cube;
 
         // Compute gammon ratios — note that GetPoints computes based on fMove
-        float[] arG = new float[2];
-        float[] arBG = new float[2];
+        Span<float> arG = stackalloc float[2];
+        Span<float> arBG = stackalloc float[2];
 
         if (ci.Move == 0)
         {
@@ -936,10 +936,10 @@ public static class CubeDecision
             dead *= 2;
         }
 
-        float[,] cpLive = new float[2, MAXCUBELEVEL];
-        float[,] cpDead = new float[2, MAXCUBELEVEL];
-        float[] p0 = new float[MET_DTLBP1 + 1];
-        float[] p1 = new float[MET_DTLBP1 + 1];
+        Span<float> cpLive = stackalloc float[2 * MAXCUBELEVEL];
+        Span<float> cpDead = stackalloc float[2 * MAXCUBELEVEL];
+        Span<float> p0 = stackalloc float[MET_DTLBP1 + 1];
+        Span<float> p1 = stackalloc float[MET_DTLBP1 + 1];
 
         // Iterate from dead cube level down to current
         for (int cubeValue = dead, n = nMax; n >= 0; cubeValue >>= 1, n--)
@@ -952,7 +952,7 @@ public static class CubeDecision
 
             for (int k = 0; k < 2; k++)
             {
-                float[] res = k == 0 ? p0 : p1;
+                Span<float> res = k == 0 ? p0 : p1;
 
                 if (away0 < 2 * cubeValue || away1 < 2 * cubeValue)
                 {
@@ -976,8 +976,8 @@ public static class CubeDecision
                         + arBG[k] * res[dtwbIdx];
 
                     float denom = rDTL - rDTW;
-                    cpDead[k, n] = Math.Abs(denom) < 1e-10f ? 0.5f : (rDTL - rDP) / denom;
-                    cpLive[k, n] = cpDead[k, n]; // dead cube → live = dead
+                    cpDead[k * MAXCUBELEVEL + n] = Math.Abs(denom) < 1e-10f ? 0.5f : (rDTL - rDP) / denom;
+                    cpLive[k * MAXCUBELEVEL + n] = cpDead[k * MAXCUBELEVEL + n]; // dead cube → live = dead
                 }
                 else
                 {
@@ -991,15 +991,15 @@ public static class CubeDecision
 
                     float denom = rRDP - rDTW;
                     if (Math.Abs(denom) < 1e-10f)
-                        cpLive[k, n] = 0.5f;
+                        cpLive[k * MAXCUBELEVEL + n] = 0.5f;
                     else
-                        cpLive[k, n] = 1.0f - cpLive[1 - k, n + 1] * (rDP - rDTW) / denom;
+                        cpLive[k * MAXCUBELEVEL + n] = 1.0f - cpLive[(1 - k) * MAXCUBELEVEL + n + 1] * (rDP - rDTW) / denom;
                 }
             }
         }
 
-        arCP[0] = cpLive[0, 0];
-        arCP[1] = cpLive[1, 0];
+        arCP[0] = cpLive[0];
+        arCP[1] = cpLive[MAXCUBELEVEL];
     }
 
     /// <summary>

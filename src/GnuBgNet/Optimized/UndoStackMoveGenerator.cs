@@ -28,22 +28,22 @@ public sealed class UndoStackMoveGenerator : IMoveGenerator
         ml.MaxMoves = 0;
         ml.MaxPips = 0;
 
-        int[] anMoves = new int[8];
-        for (int i = 0; i < 8; i++) anMoves[i] = -1;
+        Span<int> anMoves = stackalloc int[8];
+        anMoves.Fill(-1);
 
+        Span<int> anRoll = stackalloc int[4];
         if (n0 == n1)
         {
-            int[] anRoll = [n0, n0, n0, n0];
+            anRoll[0] = anRoll[1] = anRoll[2] = anRoll[3] = n0;
             GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
         }
         else
         {
-            // Try both orderings and keep the one with more moves/pips
-            int[] anRoll1 = [n0, n1, 0, 0];
-            GenerateMovesSub(ml, anRoll1, 0, 23, 0, ref board, anMoves);
+            anRoll[0] = n0; anRoll[1] = n1; anRoll[2] = 0; anRoll[3] = 0;
+            GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
 
-            int[] anRoll2 = [n1, n0, 0, 0];
-            GenerateMovesSub(ml, anRoll2, 0, 23, 0, ref board, anMoves);
+            anRoll[0] = n1; anRoll[1] = n0;
+            GenerateMovesSub(ml, anRoll, 0, 23, 0, ref board, anMoves);
         }
     }
 
@@ -125,8 +125,8 @@ public sealed class UndoStackMoveGenerator : IMoveGenerator
     /// <summary>
     /// Recursive move generation using in-place apply/undo instead of Board.Clone().
     /// </summary>
-    private static bool GenerateMovesSub(MoveList ml, int[] anRoll, int nMoveDepth,
-        int iPip, int cPip, ref Board board, int[] anMoves)
+    private static bool GenerateMovesSub(MoveList ml, Span<int> anRoll, int nMoveDepth,
+        int iPip, int cPip, ref Board board, Span<int> anMoves)
     {
         if (nMoveDepth > 3 || anRoll[nMoveDepth] == 0)
             return true;
@@ -181,7 +181,7 @@ public sealed class UndoStackMoveGenerator : IMoveGenerator
         return !fUsed;
     }
 
-    private static void SaveMoves(MoveList ml, int cMoves, uint cPip, int[] anMoves, Board board)
+    private static void SaveMoves(MoveList ml, int cMoves, uint cPip, Span<int> anMoves, Board board)
     {
         uint cMovesU = (uint)cMoves;
 
@@ -222,7 +222,7 @@ public sealed class UndoStackMoveGenerator : IMoveGenerator
         ml.Moves.Add(move);
     }
 
-    private static void CopyAnMoves(int[] src, int cMoves, Move dest)
+    private static void CopyAnMoves(Span<int> src, int cMoves, Move dest)
     {
         for (int i = 0; i < cMoves * 2; i++)
             dest.AnMove[i] = src[i];

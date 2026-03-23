@@ -1176,7 +1176,7 @@ public sealed class Evaluator : IPositionEvaluator
             // Add to cache
             if (!fTop && ec.Noise == 0.0f)
             {
-                float[] cacheEntry = new float[Constants.NumOutputs + 1];
+                Span<float> cacheEntry = stackalloc float[Constants.NumOutputs + 1];
                 for (int j = 0; j < Constants.NumOutputs; j++) cacheEntry[j] = arOutput[j];
                 for (int ici = 0; ici < cci; ici++)
                 {
@@ -1184,7 +1184,6 @@ public sealed class Evaluator : IPositionEvaluator
                     cacheEntry[Constants.NumOutputs] = arCubeful[ici];
                     int evalKey = EvalCache.ComputeEvalKey(nPlies, ec.Cubeful,
                         ec.UsePrune, aciCubePos[ici], true);
-                    // Cache storage simplified — store 5 outputs + 1 cubeful
                     _mainCache.Add(key, evalKey, cacheEntry, 0);
                 }
             }
